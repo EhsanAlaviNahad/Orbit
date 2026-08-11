@@ -38,7 +38,7 @@ final class AppController: NSObject {
         let createdAt: Date
     }
 
-    private static let scanCacheLifetime: TimeInterval = 15
+    private static let scanCacheLifetime: TimeInterval = 120
 
     private let scanner = TargetScanner()
     private let hotKey = HotKeyRegistrar()
@@ -50,11 +50,9 @@ final class AppController: NSObject {
     private var settingsWindow: NSWindow?
     private var scanTask: Task<Void, Never>?
     private var scanID: UUID?
+    private var cacheRefreshTask: Task<Void, Never>?
+    private var cacheRefreshID: UUID?
     private var activateMenuItem: NSMenuItem?
-    private var pendingActivation: ClickTarget?
-    private var pendingActivationKind: TargetActivator.Kind = .singleClick
-    private var singleClickTask: Task<Void, Never>?
-    private var enterPressCount = 0
     private var cachedScan: CachedScan?
 
     override init() {
@@ -81,18 +79,46 @@ final class AppController: NSObject {
                 throw error
             }
         }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(frontmostApplicationDidChange(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let self,
+                  let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+                return
+            }
+            self.scheduleCacheRefresh(pid: pid)
+        }
     }
 
     func shutdown() {
         cancelHintMode()
+        input.shutdown()
+        cacheRefreshTask?.cancel()
+        cacheRefreshTask = nil
+        cacheRefreshID = nil
         hotKey.shutdown()
         preferences.shutdown()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         settingsWindow?.close()
         settingsWindow = nil
     }
 
     func refreshPreferences() {
         preferences.refresh()
+    }
+
+    @objc private func frontmostApplicationDidChange(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                as? NSRunningApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return
+        }
+        scheduleCacheRefresh(pid: application.processIdentifier, delay: .milliseconds(100))
     }
 
     @objc private func toggleHintModeFromMenu() {
@@ -217,6 +243,7 @@ final class AppController: NSObject {
            cachedScan.pid == targetPID,
            Date().timeIntervalSince(cachedScan.createdAt) <= Self.scanCacheLifetime {
             present(cachedScan.result)
+            scheduleCacheRefresh(pid: targetPID)
             return
         }
 
@@ -238,7 +265,14 @@ final class AppController: NSObject {
             do {
                 let result = try await self.scanner.scanFocusedWindow(pid: targetPID)
                 guard !Task.isCancelled, self.scanID == id else { return }
-                self.cachedScan = CachedScan(pid: targetPID, result: result, createdAt: Date())
+                // Safari can briefly expose an empty Accessibility tree while a
+                // page is updating. Do not make that transient miss persist for
+                // the cache lifetime; the next shortcut press must scan again.
+                if result.targets.isEmpty {
+                    self.cachedScan = nil
+                } else {
+                    self.cachedScan = CachedScan(pid: targetPID, result: result, createdAt: Date())
+                }
                 self.present(result)
             } catch {
                 guard !Task.isCancelled else { return }
@@ -249,25 +283,6 @@ final class AppController: NSObject {
     }
 
     private func handle(_ inputValue: HintInput) {
-        if pendingActivation != nil {
-            if case .enter = inputValue, pendingActivationKind == .singleClick {
-                enterPressCount += 1
-                if enterPressCount == 2 {
-                    singleClickTask?.cancel()
-                    singleClickTask = nil
-                    pendingActivationKind = .doubleClick
-                }
-                return
-            }
-            if case .keyReleased = inputValue {
-                if pendingActivationKind != .singleClick || enterPressCount == 2 {
-                    finishPendingActivation()
-                } else {
-                    scheduleSingleClick()
-                }
-            }
-            return
-        }
         switch inputValue {
         case let .text(text):
             overlay.appendSearchText(text)
@@ -281,15 +296,15 @@ final class AppController: NSObject {
             overlay.paste()
         case .enter:
             if let target = overlay.selectedTarget() {
-                pendingActivation = target
-                pendingActivationKind = .singleClick
-                enterPressCount = 1
+                activate(target, kind: .singleClick)
+            }
+        case .optionEnter:
+            if let target = overlay.selectedTarget() {
+                activate(target, kind: .doubleClick)
             }
         case .shiftEnter:
             if let target = overlay.selectedTarget() {
-                pendingActivation = target
-                pendingActivationKind = .rightClick
-                enterPressCount = 0
+                activate(target, kind: .rightClick)
             }
         case .nextResult:
             overlay.moveSelection(by: 1)
@@ -302,26 +317,46 @@ final class AppController: NSObject {
         }
     }
 
-    private func scheduleSingleClick() {
-        guard singleClickTask == nil else { return }
-        singleClickTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            self?.finishPendingActivation()
+    private func activate(_ target: ClickTarget, kind: TargetActivator.Kind) {
+        let targetPID = cachedScan?.pid
+        cancelHintMode(discardOverlay: true)
+        TargetActivator.activate(target, kind: kind)
+        if let targetPID {
+            scheduleCacheRefresh(pid: targetPID, delay: .milliseconds(250))
         }
     }
 
-    private func finishPendingActivation() {
-        guard let target = pendingActivation else { return }
-        let kind = pendingActivationKind
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        pendingActivation = nil
-        pendingActivationKind = .singleClick
-        enterPressCount = 0
-        cachedScan = nil
-        cancelHintMode(discardOverlay: true)
-        TargetActivator.activate(target, kind: kind)
+    private func scheduleCacheRefresh(
+        pid: pid_t,
+        delay: Duration = .zero
+    ) {
+        cacheRefreshTask?.cancel()
+        let id = UUID()
+        cacheRefreshID = id
+        cacheRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.cacheRefreshID == id {
+                    self.cacheRefreshTask = nil
+                    self.cacheRefreshID = nil
+                }
+            }
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+            guard !Task.isCancelled,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                return
+            }
+            guard let result = try? await self.scanner.scanFocusedWindow(pid: pid),
+                  !Task.isCancelled,
+                  self.cacheRefreshID == id,
+                  !result.targets.isEmpty,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                return
+            }
+            self.cachedScan = CachedScan(pid: pid, result: result, createdAt: Date())
+        }
     }
 
     private func present(_ result: ScanResult) {
@@ -347,11 +382,6 @@ final class AppController: NSObject {
         scanTask?.cancel()
         scanTask = nil
         scanID = nil
-        pendingActivation = nil
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        pendingActivationKind = .singleClick
-        enterPressCount = 0
         input.stop()
         if discardOverlay {
             overlay.dismiss()

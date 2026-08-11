@@ -31,6 +31,16 @@ final class TargetScanner: Sendable {
         let windowNumber: CGWindowID?
     }
 
+    private struct ElementSnapshot {
+        let children: [AXUIElement]
+        let role: String
+        let enabled: Bool
+        let hidden: Bool
+        let frame: CGRect?
+        let labelValues: [String]
+        let value: String?
+    }
+
     func scanFocusedWindow(pid: pid_t) async throws -> ScanResult {
         guard PermissionCenter.accessibilityGranted else {
             throw ScanError.accessibilityUnavailable
@@ -46,13 +56,19 @@ final class TargetScanner: Sendable {
         let accessibilityTask = Task.detached(priority: .userInitiated) {
             Self.accessibilityTargets(in: context)
         }
-        let ocrTask = Task(priority: .userInitiated) {
-            guard PermissionCenter.screenRecordingGranted else { return [ClickTarget]() }
-            return (try? await Self.ocrTargets(in: context)) ?? []
-        }
         return try await withTaskCancellationHandler {
             let accessibilityTargets = await accessibilityTask.value
-            let ocrTargets = await ocrTask.value
+            try Task.checkCancellation()
+
+            // Accessibility already describes Safari and native controls. OCR
+            // is much slower, so reserve it for windows where Accessibility
+            // found nothing instead of delaying every shortcut press.
+            let ocrTargets: [ClickTarget]
+            if accessibilityTargets.isEmpty, PermissionCenter.screenRecordingGranted {
+                ocrTargets = (try? await Self.ocrTargets(in: context)) ?? []
+            } else {
+                ocrTargets = []
+            }
             try Task.checkCancellation()
             return ScanResult(
                 windowFrame: context.frame,
@@ -63,13 +79,12 @@ final class TargetScanner: Sendable {
             )
         } onCancel: {
             accessibilityTask.cancel()
-            ocrTask.cancel()
         }
     }
 
     private static func focusedWindow(pid: pid_t) -> WindowContext? {
         let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, 0.25)
+        AXUIElementSetMessagingTimeout(appElement, 0.10)
         guard let window: AXUIElement = attribute(kAXFocusedWindowAttribute, from: appElement),
               let frame = elementFrame(window),
               frame.width > 1,
@@ -78,7 +93,7 @@ final class TargetScanner: Sendable {
         }
         let title: String = attribute(kAXTitleAttribute, from: window) ?? ""
         let windowNumber: Int? = attribute("AXWindowNumber", from: window)
-        AXUIElementSetMessagingTimeout(window, 0.25)
+        AXUIElementSetMessagingTimeout(window, 0.10)
         return WindowContext(
             pid: pid,
             title: title,
@@ -89,8 +104,8 @@ final class TargetScanner: Sendable {
     }
 
     private static func accessibilityTargets(in context: WindowContext) -> [ClickTarget] {
-        let maximumNodeCount = 12_000
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        let maximumNodeCount = 6_000
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(500))
         var queue: [AXUIElement] = [context.element]
         var cursor = 0
         var visited: [CFHashCode: [AXUIElement]] = [:]
@@ -104,39 +119,47 @@ final class TargetScanner: Sendable {
               !Task.isCancelled {
             let element = queue[cursor]
             cursor += 1
-            AXUIElementSetMessagingTimeout(element, 0.20)
+            AXUIElementSetMessagingTimeout(element, 0.10)
             guard insertIdentity(element, into: &visited) else { continue }
 
-            for relationship in childRelationshipAttributes {
-                guard ContinuousClock.now < deadline else { break }
-                guard let children: [AXUIElement] = attribute(relationship, from: element) else {
-                    continue
-                }
-                for child in children where queue.count < maximumNodeCount {
+            let snapshot = elementSnapshot(element)
+
+            if !snapshot.children.isEmpty {
+                for child in snapshot.children where queue.count < maximumNodeCount {
                     if insertIdentity(child, into: &enqueued) {
                         queue.append(child)
                     }
                 }
+            } else if alternateChildRelationshipRoles.contains(snapshot.role) {
+                // Some apps omit AXChildren but expose an alternate relationship.
+                for relationship in childRelationshipAttributes.dropFirst() {
+                    guard ContinuousClock.now < deadline else { break }
+                    guard let children: [AXUIElement] = attribute(relationship, from: element) else {
+                        continue
+                    }
+                    for child in children where queue.count < maximumNodeCount {
+                        if insertIdentity(child, into: &enqueued) {
+                            queue.append(child)
+                        }
+                    }
+                    if !children.isEmpty { break }
+                }
             }
 
             guard ContinuousClock.now < deadline else { break }
-            let actions = actionNames(element)
-            guard ContinuousClock.now < deadline else { break }
-            guard isEnabled(element) else { continue }
-            guard ContinuousClock.now < deadline else { break }
-            guard !isHidden(element) else { continue }
-            guard ContinuousClock.now < deadline else { break }
-            guard let frame = elementFrame(element, deadline: deadline),
+            guard snapshot.enabled, !snapshot.hidden else { continue }
+            guard let frame = snapshot.frame,
                   frame.width >= 4,
                   frame.height >= 4,
                   frame.intersects(context.frame) else {
                 continue
             }
+            let roleIsInteractive = interactiveRoles.contains(snapshot.role)
+            guard roleIsInteractive || actionCandidateRoles.contains(snapshot.role) else { continue }
+            let actions = actionNames(element)
             guard ContinuousClock.now < deadline else { break }
-            guard isInteractive(element, actions: actions) else { continue }
-            guard ContinuousClock.now < deadline else { break }
-            let label = elementLabel(element, deadline: deadline)
-            guard ContinuousClock.now < deadline else { break }
+            guard roleIsInteractive || actions.contains(where: actionableActions.contains) else { continue }
+            let label = elementLabel(from: snapshot)
 
             targets.append(ClickTarget(
                 id: UUID(),
@@ -150,6 +173,107 @@ final class TargetScanner: Sendable {
 
         return TargetGeometry.deduplicated(targets)
     }
+
+    private static func elementSnapshot(_ element: AXUIElement) -> ElementSnapshot {
+        let keys = snapshotAttributeKeys
+        var rawValues: CFArray?
+        let status = AXUIElementCopyMultipleAttributeValues(
+            element,
+            keys as CFArray,
+            AXCopyMultipleAttributeOptions(rawValue: 0),
+            &rawValues
+        )
+        guard status == .success,
+              let values = rawValues as? [Any],
+              values.count == keys.count else {
+            return individualElementSnapshot(element)
+        }
+
+        let position = axValue(values[4])
+        let size = axValue(values[5])
+        return ElementSnapshot(
+            children: values[0] as? [AXUIElement] ?? [],
+            role: values[1] as? String ?? "",
+            enabled: values[2] as? Bool ?? true,
+            hidden: values[3] as? Bool ?? false,
+            frame: frame(position: position, size: size),
+            labelValues: values[6...11].compactMap { $0 as? String },
+            value: values[12] as? String
+        )
+    }
+
+    private static func individualElementSnapshot(_ element: AXUIElement) -> ElementSnapshot {
+        let position: AXValue? = attribute(kAXPositionAttribute as String, from: element)
+        let size: AXValue? = attribute(kAXSizeAttribute as String, from: element)
+        return ElementSnapshot(
+            children: attribute(kAXChildrenAttribute as String, from: element) ?? [],
+            role: attribute(kAXRoleAttribute as String, from: element) ?? "",
+            enabled: attribute(kAXEnabledAttribute as String, from: element) ?? true,
+            hidden: attribute(kAXHiddenAttribute as String, from: element) ?? false,
+            frame: frame(position: position, size: size),
+            labelValues: snapshotLabelKeys.compactMap { key in
+                attribute(key, from: element) as String?
+            },
+            value: attribute(kAXValueAttribute as String, from: element)
+        )
+    }
+
+    private static func frame(position: AXValue?, size: AXValue?) -> CGRect? {
+        guard let position, let size else { return nil }
+        var origin = CGPoint.zero
+        var dimensions = CGSize.zero
+        guard AXValueGetValue(position, .cgPoint, &origin),
+              AXValueGetValue(size, .cgSize, &dimensions) else {
+            return nil
+        }
+        return CGRect(origin: origin, size: dimensions)
+    }
+
+    private static func axValue(_ value: Any) -> AXValue? {
+        let object = value as CFTypeRef
+        guard CFGetTypeID(object) == AXValueGetTypeID() else { return nil }
+        return unsafeDowncast(object, to: AXValue.self)
+    }
+
+    private static func elementLabel(from snapshot: ElementSnapshot) -> String {
+        var components: [String] = []
+        for value in snapshot.labelValues {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty,
+               trimmed.count <= 200,
+               !components.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+                components.append(trimmed)
+            }
+        }
+        if !["AXTextArea", "AXTextField", "AXSearchField"].contains(snapshot.role),
+           let value = snapshot.value {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty,
+               trimmed.count <= 200,
+               !components.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+                components.append(trimmed)
+            }
+        }
+        return components.isEmpty ? "Control" : components.joined(separator: " ")
+    }
+
+    private static let snapshotLabelKeys = [
+        kAXTitleAttribute as String,
+        kAXDescriptionAttribute as String,
+        kAXHelpAttribute as String,
+        "AXIdentifier",
+        "AXPlaceholderValue",
+        kAXRoleDescriptionAttribute as String
+    ]
+
+    private static let snapshotAttributeKeys = [
+        kAXChildrenAttribute as String,
+        kAXRoleAttribute as String,
+        kAXEnabledAttribute as String,
+        kAXHiddenAttribute as String,
+        kAXPositionAttribute as String,
+        kAXSizeAttribute as String
+    ] + snapshotLabelKeys + [kAXValueAttribute as String]
 
     private static func ocrTargets(in context: WindowContext) async throws -> [ClickTarget] {
         try Task.checkCancellation()
@@ -180,8 +304,8 @@ final class TargetScanner: Sendable {
         try Task.checkCancellation()
 
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
         let handler = VNImageRequestHandler(cgImage: image, orientation: .up)
         try handler.perform([request])
         try Task.checkCancellation()
@@ -260,6 +384,26 @@ final class TargetScanner: Sendable {
         "AXPick",
         "AXShowMenu",
         "AXOpen"
+    ]
+
+    private static let actionCandidateRoles: Set<String> = [
+        "AXGroup",
+        "AXImage"
+    ]
+
+    private static let alternateChildRelationshipRoles: Set<String> = [
+        "AXWindow",
+        "AXWebArea",
+        "AXGroup",
+        "AXScrollArea",
+        "AXList",
+        "AXTable",
+        "AXOutline",
+        "AXToolbar",
+        "AXTabGroup",
+        "AXSplitGroup",
+        "AXSheet",
+        "AXPopover"
     ]
 
     private static let interactiveRoles: Set<String> = [
@@ -403,7 +547,7 @@ enum TargetActivator {
             if kind == .singleClick,
                let element = target.axElement,
                let action = target.axAction {
-                AXUIElementSetMessagingTimeout(element, 0.25)
+                AXUIElementSetMessagingTimeout(element, 0.05)
                 if AXUIElementPerformAction(element, action as CFString) == .success {
                     return
                 }

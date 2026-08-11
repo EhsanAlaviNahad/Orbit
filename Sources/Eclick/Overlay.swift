@@ -9,6 +9,7 @@ enum HintInput {
     case copy
     case paste
     case enter
+    case optionEnter
     case shiftEnter
     case nextResult
     case previousResult
@@ -24,9 +25,18 @@ final class HintInputMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var pendingTerminalKeyCode: UInt16?
+    private var isActive = false
+    private var suppressCancelShortcutUntil: ContinuousClock.Instant?
 
     func start() -> Bool {
-        stop()
+        pendingTerminalKeyCode = nil
+        suppressCancelShortcutUntil = .now.advanced(by: .milliseconds(200))
+        if let eventTap, CFMachPortIsValid(eventTap) {
+            isActive = true
+            CGEvent.tapEnable(tap: eventTap, enable: true)
+            return true
+        }
+        shutdown()
         let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
             | (CGEventMask(1) << CGEventType.keyUp.rawValue)
         let context = Unmanaged.passUnretained(self).toOpaque()
@@ -40,13 +50,17 @@ final class HintInputMonitor {
                     return Unmanaged.passUnretained(event)
                 }
                 let monitor = Unmanaged<HintInputMonitor>.fromOpaque(context).takeUnretainedValue()
+                guard monitor.isActive else {
+                    return Unmanaged.passUnretained(event)
+                }
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     monitor.reenable()
                     return Unmanaged.passUnretained(event)
                 }
                 if type == .keyUp {
-                    monitor.handleKeyUp(event)
-                    return nil
+                    return monitor.handleKeyUp(event)
+                        ? Unmanaged.passUnretained(event)
+                        : nil
                 }
                 guard type == .keyDown else { return Unmanaged.passUnretained(event) }
                 return monitor.handle(event)
@@ -60,13 +74,23 @@ final class HintInputMonitor {
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        isActive = true
         CGEvent.tapEnable(tap: tap, enable: true)
         return true
     }
 
     func stop() {
+        isActive = false
+        suppressCancelShortcutUntil = nil
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
+        }
+        pendingTerminalKeyCode = nil
+    }
+
+    func shutdown() {
+        stop()
+        if let eventTap {
             CFMachPortInvalidate(eventTap)
         }
         if let runLoopSource {
@@ -74,13 +98,17 @@ final class HintInputMonitor {
         }
         eventTap = nil
         runLoopSource = nil
-        pendingTerminalKeyCode = nil
     }
 
     private func handle(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let flags = event.flags
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         if matchesCancelShortcut(keyCode: keyCode, flags: flags) {
+            if let deadline = suppressCancelShortcutUntil,
+               ContinuousClock.now < deadline {
+                return nil
+            }
+            suppressCancelShortcutUntil = nil
             onInput?(.escape)
             return nil
         }
@@ -109,7 +137,13 @@ final class HintInputMonitor {
             onInput?(.backspace)
         case 36, 76:
             pendingTerminalKeyCode = keyCode
-            onInput?(flags.contains(.maskShift) ? .shiftEnter : .enter)
+            if flags.contains(.maskShift) {
+                onInput?(.shiftEnter)
+            } else if flags.contains(.maskAlternate) {
+                onInput?(.optionEnter)
+            } else {
+                onInput?(.enter)
+            }
         case 48:
             onInput?(flags.contains(.maskShift) ? .previousResult : .nextResult)
         case 125:
@@ -126,11 +160,16 @@ final class HintInputMonitor {
         return nil
     }
 
-    private func handleKeyUp(_ event: CGEvent) {
+    private func handleKeyUp(_ event: CGEvent) -> Bool {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        guard keyCode == pendingTerminalKeyCode else { return }
+        if UInt32(keyCode) == cancelShortcut.keyCode {
+            suppressCancelShortcutUntil = nil
+            return true
+        }
+        guard keyCode == pendingTerminalKeyCode else { return false }
         pendingTerminalKeyCode = nil
         onInput?(.keyReleased)
+        return false
     }
 
     private func printableText(from event: CGEvent) -> String? {
@@ -172,7 +211,7 @@ final class HintInputMonitor {
     }
 
     private func reenable() {
-        if let eventTap {
+        if isActive, let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: true)
         }
     }
@@ -369,7 +408,6 @@ final class HintOverlayController {
     func hide() {
         guard isPresented else { return }
         transition += 1
-        let currentTransition = transition
         isPresented = false
         query = ""
         rankedTargets = []
@@ -377,28 +415,18 @@ final class HintOverlayController {
         selectedIndex = 0
         querySelectionIsAll = false
         refreshViews()
-        overlayViews.forEach { $0.animateSearchHUDOut() }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            panels.forEach { $0.animator().alphaValue = 0 }
-        } completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.transition == currentTransition else { return }
-                self.panels.forEach { $0.orderOut(nil) }
-            }
+        panels.forEach {
+            $0.alphaValue = 0
+            $0.orderOut(nil)
         }
     }
 
     private func presentPanels() {
         transition += 1
         isPresented = true
-        panels.forEach { $0.orderFrontRegardless() }
-        overlayViews.forEach { $0.animateSearchHUDIn() }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panels.forEach { $0.animator().alphaValue = 1 }
+        panels.forEach {
+            $0.alphaValue = 1
+            $0.orderFrontRegardless()
         }
     }
 
@@ -723,7 +751,7 @@ private final class SearchHUDView: NSGlassEffectView {
                     .foregroundColor: NSColor.tertiaryLabelColor
                 ]
             )
-            detailLabel.stringValue = "Return: click  •  Return twice: double-click  •  ⇧Return: right-click"
+            detailLabel.stringValue = "Return: click  •  ⌥Return: double-click  •  ⇧Return: right-click"
         } else {
             if selectionIsAll {
                 searchLabel.attributedStringValue = NSAttributedString(

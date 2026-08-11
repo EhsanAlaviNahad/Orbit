@@ -52,6 +52,9 @@ final class AppController: NSObject {
     private var scanID: UUID?
     private var activateMenuItem: NSMenuItem?
     private var pendingActivation: ClickTarget?
+    private var pendingActivationKind: TargetActivator.Kind = .singleClick
+    private var singleClickTask: Task<Void, Never>?
+    private var enterPressCount = 0
     private var cachedScan: CachedScan?
 
     override init() {
@@ -247,8 +250,21 @@ final class AppController: NSObject {
 
     private func handle(_ inputValue: HintInput) {
         if pendingActivation != nil {
+            if case .enter = inputValue, pendingActivationKind == .singleClick {
+                enterPressCount += 1
+                if enterPressCount == 2 {
+                    singleClickTask?.cancel()
+                    singleClickTask = nil
+                    pendingActivationKind = .doubleClick
+                }
+                return
+            }
             if case .keyReleased = inputValue {
-                finishPendingActivation()
+                if pendingActivationKind != .singleClick || enterPressCount == 2 {
+                    finishPendingActivation()
+                } else {
+                    scheduleSingleClick()
+                }
             }
             return
         }
@@ -266,6 +282,14 @@ final class AppController: NSObject {
         case .enter:
             if let target = overlay.selectedTarget() {
                 pendingActivation = target
+                pendingActivationKind = .singleClick
+                enterPressCount = 1
+            }
+        case .shiftEnter:
+            if let target = overlay.selectedTarget() {
+                pendingActivation = target
+                pendingActivationKind = .rightClick
+                enterPressCount = 0
             }
         case .nextResult:
             overlay.moveSelection(by: 1)
@@ -278,12 +302,26 @@ final class AppController: NSObject {
         }
     }
 
+    private func scheduleSingleClick() {
+        guard singleClickTask == nil else { return }
+        singleClickTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.finishPendingActivation()
+        }
+    }
+
     private func finishPendingActivation() {
         guard let target = pendingActivation else { return }
+        let kind = pendingActivationKind
+        singleClickTask?.cancel()
+        singleClickTask = nil
         pendingActivation = nil
+        pendingActivationKind = .singleClick
+        enterPressCount = 0
         cachedScan = nil
         cancelHintMode(discardOverlay: true)
-        TargetActivator.activate(target)
+        TargetActivator.activate(target, kind: kind)
     }
 
     private func present(_ result: ScanResult) {
@@ -310,6 +348,10 @@ final class AppController: NSObject {
         scanTask = nil
         scanID = nil
         pendingActivation = nil
+        singleClickTask?.cancel()
+        singleClickTask = nil
+        pendingActivationKind = .singleClick
+        enterPressCount = 0
         input.stop()
         if discardOverlay {
             overlay.dismiss()

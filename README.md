@@ -36,7 +36,7 @@ Always grant permissions to the installed copy at `~/Applications/Eclick.app`. B
 1. Focus the window containing the control.
 2. Press **Command-E**.
 3. Type part of the control name. Search ignores case, accents, and punctuation; for example, `settings` or `set-` matches “Settings.”
-4. Press Enter to activate the highlighted result. Use Tab, Shift-Tab, Up, or Down to select another match.
+4. Press Enter to click the highlighted result, Enter twice to double-click it, or Shift-Enter to right-click it. Use Tab, Shift-Tab, Up, or Down to select another match.
 5. Every target keeps a visible home-row hint. Type either an element name or its hint, then press Enter. No modifier key is needed.
 6. Press Escape or Command-E again to cancel. Backspace edits the unified search.
 

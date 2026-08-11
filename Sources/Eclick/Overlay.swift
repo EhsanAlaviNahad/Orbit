@@ -9,6 +9,7 @@ enum HintInput {
     case copy
     case paste
     case enter
+    case shiftEnter
     case nextResult
     case previousResult
     case keyReleased
@@ -108,7 +109,7 @@ final class HintInputMonitor {
             onInput?(.backspace)
         case 36, 76:
             pendingTerminalKeyCode = keyCode
-            onInput?(.enter)
+            onInput?(flags.contains(.maskShift) ? .shiftEnter : .enter)
         case 48:
             onInput?(flags.contains(.maskShift) ? .previousResult : .nextResult)
         case 125:
@@ -722,7 +723,7 @@ private final class SearchHUDView: NSGlassEffectView {
                     .foregroundColor: NSColor.tertiaryLabelColor
                 ]
             )
-            detailLabel.stringValue = "Type a name or hint  •  Return to click  •  ↑↓ to navigate"
+            detailLabel.stringValue = "Return: click  •  Return twice: double-click  •  ⇧Return: right-click"
         } else {
             if selectionIsAll {
                 searchLabel.attributedStringValue = NSAttributedString(
@@ -744,7 +745,7 @@ private final class SearchHUDView: NSGlassEffectView {
             }
             detailLabel.stringValue = matchCount == 0
                 ? "No results  •  Delete to edit  •  Esc to close"
-                : "\(matchCount) result\(matchCount == 1 ? "" : "s")  •  Return to click  •  ↑↓ to navigate"
+                : "\(matchCount) result\(matchCount == 1 ? "" : "s")  •  Return twice: double-click  •  ⇧Return: right-click"
         }
         needsLayout = true
     }

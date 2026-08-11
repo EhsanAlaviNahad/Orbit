@@ -392,9 +392,16 @@ final class TargetScanner: Sendable {
 }
 
 enum TargetActivator {
-    static func activate(_ target: ClickTarget) {
+    enum Kind {
+        case singleClick
+        case doubleClick
+        case rightClick
+    }
+
+    static func activate(_ target: ClickTarget, kind: Kind = .singleClick) {
         Task.detached(priority: .userInitiated) {
-            if let element = target.axElement,
+            if kind == .singleClick,
+               let element = target.axElement,
                let action = target.axAction {
                 AXUIElementSetMessagingTimeout(element, 0.25)
                 if AXUIElementPerformAction(element, action as CFString) == .success {
@@ -405,10 +412,30 @@ enum TargetActivator {
             let point = target.clickPoint
             CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
                 .post(tap: .cghidEventTap)
-            CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)?
-                .post(tap: .cghidEventTap)
-            CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)?
-                .post(tap: .cghidEventTap)
+            switch kind {
+            case .singleClick:
+                postClick(at: point, button: .left, down: .leftMouseDown, up: .leftMouseUp)
+            case .doubleClick:
+                postClick(at: point, button: .left, down: .leftMouseDown, up: .leftMouseUp, count: 1)
+                postClick(at: point, button: .left, down: .leftMouseDown, up: .leftMouseUp, count: 2)
+            case .rightClick:
+                postClick(at: point, button: .right, down: .rightMouseDown, up: .rightMouseUp)
+            }
         }
+    }
+
+    private static func postClick(
+        at point: CGPoint,
+        button: CGMouseButton,
+        down: CGEventType,
+        up: CGEventType,
+        count: Int64 = 1
+    ) {
+        let downEvent = CGEvent(mouseEventSource: nil, mouseType: down, mouseCursorPosition: point, mouseButton: button)
+        downEvent?.setIntegerValueField(.mouseEventClickState, value: count)
+        downEvent?.post(tap: .cghidEventTap)
+        let upEvent = CGEvent(mouseEventSource: nil, mouseType: up, mouseCursorPosition: point, mouseButton: button)
+        upEvent?.setIntegerValueField(.mouseEventClickState, value: count)
+        upEvent?.post(tap: .cghidEventTap)
     }
 }

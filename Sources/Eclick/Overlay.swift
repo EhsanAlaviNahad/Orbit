@@ -238,7 +238,7 @@ final class HintOverlayController {
         if !panels.isEmpty,
            allAssignments.map(\.id) == assignments.map(\.id) {
             allAssignments = assignments
-            self.assignments = assignments
+            self.assignments = assignments.filter { $0.target.windowArrangement == nil }
             query = ""
             rankedTargets = []
             selectedIndex = 0
@@ -251,7 +251,7 @@ final class HintOverlayController {
         guard !assignments.isEmpty else { return }
 
         allAssignments = assignments
-        self.assignments = assignments
+        self.assignments = assignments.filter { $0.target.windowArrangement == nil }
         let mainScreenHeight = NSScreen.screens.first?.frame.height ?? 0
         var hudAssigned = false
 
@@ -269,7 +269,7 @@ final class HintOverlayController {
             guard !screenAssignments.isEmpty else { continue }
 
             let view = HintOverlayView(frame: CGRect(origin: .zero, size: screen.frame.size))
-            view.assignments = screenAssignments
+            view.assignments = screenAssignments.filter { $0.target.windowArrangement == nil }
             view.desktopOrigin = screen.frame.origin
             view.mainScreenHeight = mainScreenHeight
             view.quartzScreenFrame = quartzScreenFrame
@@ -411,7 +411,7 @@ final class HintOverlayController {
         isPresented = false
         query = ""
         rankedTargets = []
-        assignments = allAssignments
+        assignments = allAssignments.filter { $0.target.windowArrangement == nil }
         selectedIndex = 0
         querySelectionIsAll = false
         refreshViews()
@@ -433,7 +433,7 @@ final class HintOverlayController {
     private func refreshSearch() {
         if query.isEmpty {
             rankedTargets = []
-            assignments = allAssignments
+            assignments = allAssignments.filter { $0.target.windowArrangement == nil }
         } else {
             let matches = TargetSearch.matches(query: query, assignments: allAssignments)
             rankedTargets = matches.map(\.target)
@@ -444,16 +444,20 @@ final class HintOverlayController {
     }
 
     private func refreshViews() {
-        let selectedID = rankedTargets.indices.contains(selectedIndex)
-            ? rankedTargets[selectedIndex].id
+        let selectedTarget = rankedTargets.indices.contains(selectedIndex)
+            ? rankedTargets[selectedIndex]
             : nil
+        let selectedID = selectedTarget?.id
         for view in overlayViews {
             view.assignments = assignments.filter {
-                view.quartzScreenFrame.contains($0.target.clickPoint)
+                $0.target.windowArrangement == nil
+                    && view.quartzScreenFrame.contains($0.target.clickPoint)
             }
             view.query = query
             view.querySelectionIsAll = querySelectionIsAll
             view.selectedTargetID = selectedID
+            view.selectedTargetLabel = selectedTarget?.label
+            view.selectedTargetIsCommand = selectedTarget?.windowArrangement != nil
             view.matchCount = rankedTargets.count
         }
     }
@@ -468,6 +472,10 @@ private final class HintOverlayView: NSView {
         }
     }
     var selectedTargetID: UUID? { didSet { needsDisplay = true } }
+    var selectedTargetLabel: String? { didSet { searchHUD.selectedLabel = selectedTargetLabel } }
+    var selectedTargetIsCommand = false {
+        didSet { searchHUD.selectedIsCommand = selectedTargetIsCommand }
+    }
     var matchCount = 0 {
         didSet {
             searchHUD.matchCount = matchCount
@@ -641,6 +649,8 @@ private final class SearchHUDView: NSGlassEffectView {
     var query = "" { didSet { refresh() } }
     var matchCount = 0 { didSet { refresh() } }
     var selectionIsAll = false { didSet { refresh() } }
+    var selectedLabel: String? { didSet { refresh() } }
+    var selectedIsCommand = false { didSet { refresh() } }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -751,7 +761,7 @@ private final class SearchHUDView: NSGlassEffectView {
                     .foregroundColor: NSColor.tertiaryLabelColor
                 ]
             )
-            detailLabel.stringValue = "Return: click  •  ⌥Return: double-click  •  ⇧Return: right-click"
+            detailLabel.stringValue = "Type an element or window command"
         } else {
             if selectionIsAll {
                 searchLabel.attributedStringValue = NSAttributedString(
@@ -771,9 +781,15 @@ private final class SearchHUDView: NSGlassEffectView {
                     ]
                 )
             }
-            detailLabel.stringValue = matchCount == 0
-                ? "No results  •  Delete to edit  •  Esc to close"
-                : "\(matchCount) result\(matchCount == 1 ? "" : "s")  •  Return twice: double-click  •  ⇧Return: right-click"
+            if matchCount == 0 {
+                detailLabel.stringValue = "No results  •  Delete to edit  •  Esc to close"
+            } else if selectedIsCommand, let selectedLabel {
+                detailLabel.stringValue = "\(selectedLabel)  •  Return: run command  •  Tab/↑/↓: choose"
+            } else if let selectedLabel {
+                detailLabel.stringValue = "\(selectedLabel)  •  Return: click  •  Tab/↑/↓: choose"
+            } else {
+                detailLabel.stringValue = "\(matchCount) result\(matchCount == 1 ? "" : "s")"
+            }
         }
         needsLayout = true
     }

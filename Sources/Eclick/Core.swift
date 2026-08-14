@@ -5,11 +5,13 @@ import Foundation
 enum TargetSource: String, Codable, CaseIterable {
     case accessibility
     case ocr
+    case command
 
     fileprivate var mergePriority: Int {
         switch self {
         case .accessibility: 1
         case .ocr: 0
+        case .command: 2
         }
     }
 }
@@ -21,6 +23,8 @@ struct ClickTarget: Identifiable, @unchecked Sendable {
     var source: TargetSource
     var axElement: AXUIElement?
     var axAction: String?
+    var searchAliases: [String]
+    var windowArrangement: WindowArrangement?
 
     init(
         id: UUID = UUID(),
@@ -28,7 +32,9 @@ struct ClickTarget: Identifiable, @unchecked Sendable {
         label: String = "",
         source: TargetSource,
         axElement: AXUIElement? = nil,
-        axAction: String? = nil
+        axAction: String? = nil,
+        searchAliases: [String] = [],
+        windowArrangement: WindowArrangement? = nil
     ) {
         self.id = id
         self.frame = frame.standardized
@@ -36,10 +42,16 @@ struct ClickTarget: Identifiable, @unchecked Sendable {
         self.source = source
         self.axElement = axElement
         self.axAction = axAction
+        self.searchAliases = searchAliases
+        self.windowArrangement = windowArrangement
     }
 
     var clickPoint: CGPoint {
         CGPoint(x: frame.midX, y: frame.midY)
+    }
+
+    var searchTerms: [String] {
+        [label] + searchAliases
     }
 }
 
@@ -60,6 +72,151 @@ struct KeyboardShortcut: Codable, Hashable {
         carbonModifiers: 1 << 8,
         displayName: "⌘E"
     )
+}
+
+enum WindowArrangement: Int, CaseIterable, Sendable {
+    case tileLeft
+    case tileRight
+    case tileTop
+    case tileBottom
+    case center
+    case fill
+    case fullScreen
+
+    var displayName: String {
+        switch self {
+        case .tileLeft: "Tile Window Left"
+        case .tileRight: "Tile Window Right"
+        case .tileTop: "Tile Window Top"
+        case .tileBottom: "Tile Window Bottom"
+        case .center: "Center Window"
+        case .fill: "Fill Window"
+        case .fullScreen: "Full Screen"
+        }
+    }
+
+    var searchAliases: [String] {
+        switch self {
+        case .tileLeft:
+            ["left", "tile left", "left half", "window left", "move window left"]
+        case .tileRight:
+            ["right", "tile right", "right half", "window right", "move window right"]
+        case .tileTop:
+            ["top", "tile top", "top half", "window top", "move window up"]
+        case .tileBottom:
+            ["bottom", "tile bottom", "bottom half", "window bottom", "move window down"]
+        case .center:
+            ["center", "centre", "center window", "centre window"]
+        case .fill:
+            ["fill", "fill window", "maximize", "maximise", "maximize window"]
+        case .fullScreen:
+            ["fullscreen", "full screen", "enter fullscreen", "enter full screen"]
+        }
+    }
+}
+
+enum WindowCommandCatalog {
+    static func targets(windowFrame: CGRect) -> [ClickTarget] {
+        let commandFrame = CGRect(
+            x: windowFrame.midX,
+            y: windowFrame.midY,
+            width: 1,
+            height: 1
+        )
+        return WindowArrangement.allCases.map { arrangement in
+            ClickTarget(
+                frame: commandFrame,
+                label: arrangement.displayName,
+                source: .command,
+                searchAliases: arrangement.searchAliases,
+                windowArrangement: arrangement
+            )
+        }
+    }
+}
+
+enum WindowGeometry {
+    static func accessibilityFrame(from appKitFrame: CGRect, primaryScreenTop: CGFloat) -> CGRect {
+        CGRect(
+            x: appKitFrame.minX,
+            y: primaryScreenTop - appKitFrame.maxY,
+            width: appKitFrame.width,
+            height: appKitFrame.height
+        )
+    }
+
+    static func frame(
+        for arrangement: WindowArrangement,
+        currentFrame: CGRect,
+        visibleFrame: CGRect
+    ) -> CGRect {
+        let visible = visibleFrame.standardized
+        guard TargetGeometry.isUsable(visible) else { return currentFrame.standardized }
+
+        let halfWidth = floor(visible.width / 2)
+        let halfHeight = floor(visible.height / 2)
+        switch arrangement {
+        case .tileLeft:
+            return CGRect(
+                x: visible.minX,
+                y: visible.minY,
+                width: halfWidth,
+                height: visible.height
+            )
+        case .tileRight:
+            return CGRect(
+                x: visible.minX + halfWidth,
+                y: visible.minY,
+                width: visible.width - halfWidth,
+                height: visible.height
+            )
+        case .tileTop:
+            return CGRect(
+                x: visible.minX,
+                y: visible.minY,
+                width: visible.width,
+                height: halfHeight
+            )
+        case .tileBottom:
+            return CGRect(
+                x: visible.minX,
+                y: visible.minY + halfHeight,
+                width: visible.width,
+                height: visible.height - halfHeight
+            )
+        case .center:
+            let usableCurrent = TargetGeometry.isUsable(currentFrame)
+                ? currentFrame.standardized
+                : visible
+            let width = min(usableCurrent.width, visible.width)
+            let height = min(usableCurrent.height, visible.height)
+            return CGRect(
+                x: visible.midX - width / 2,
+                y: visible.midY - height / 2,
+                width: width,
+                height: height
+            )
+        case .fill, .fullScreen:
+            return visible
+        }
+    }
+
+    static func bestVisibleFrame(for window: CGRect, in screens: [CGRect]) -> CGRect? {
+        screens.max { left, right in
+            let leftArea = intersectionArea(window, left)
+            let rightArea = intersectionArea(window, right)
+            if leftArea != rightArea { return leftArea < rightArea }
+            let leftDistance = hypot(window.midX - left.midX, window.midY - left.midY)
+            let rightDistance = hypot(window.midX - right.midX, window.midY - right.midY)
+            return leftDistance > rightDistance
+        }
+    }
+
+    private static func intersectionArea(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull, !intersection.isEmpty else { return 0 }
+        return intersection.width * intersection.height
+    }
 }
 
 struct HintAssignment: Identifiable {
@@ -93,10 +250,17 @@ enum TargetSearch {
         let rankedMatches: [(match: SearchMatch, spatialIndex: Int)] = TargetGeometry.sortedTopLeft(targets)
             .enumerated().compactMap { entry -> (match: SearchMatch, spatialIndex: Int)? in
             let (spatialIndex, target) = entry
-            let label = normalize(target.label)
-            guard !label.isEmpty,
-                  let relevance = relevance(query: normalizedQuery, label: label)
-            else { return nil }
+            let relevance = target.searchTerms.compactMap { term -> (rank: MatchRank, score: Int)? in
+                let normalizedTerm = normalize(term)
+                guard !normalizedTerm.isEmpty else { return nil }
+                return relevance(query: normalizedQuery, label: normalizedTerm)
+            }.min { lhs, rhs in
+                if lhs.rank.rawValue != rhs.rank.rawValue {
+                    return lhs.rank.rawValue < rhs.rank.rawValue
+                }
+                return lhs.score < rhs.score
+            }
+            guard let relevance else { return nil }
 
             return (
                 SearchMatch(target: target, rank: relevance.rank.rawValue, score: relevance.score),
@@ -106,6 +270,10 @@ enum TargetSearch {
         return rankedMatches.sorted { lhs, rhs in
             if lhs.match.rank != rhs.match.rank { return lhs.match.rank < rhs.match.rank }
             if lhs.match.score != rhs.match.score { return lhs.match.score < rhs.match.score }
+            if (lhs.match.target.windowArrangement != nil)
+                != (rhs.match.target.windowArrangement != nil) {
+                return lhs.match.target.windowArrangement != nil
+            }
             return lhs.spatialIndex < rhs.spatialIndex
         }.map(\.match)
     }
@@ -139,6 +307,10 @@ enum TargetSearch {
         }.sorted { lhs, rhs in
             if lhs.0.rank != rhs.0.rank { return lhs.0.rank < rhs.0.rank }
             if lhs.0.score != rhs.0.score { return lhs.0.score < rhs.0.score }
+            if (lhs.0.target.windowArrangement != nil)
+                != (rhs.0.target.windowArrangement != nil) {
+                return lhs.0.target.windowArrangement != nil
+            }
             return lhs.1 < rhs.1
         }.map(\.0)
     }

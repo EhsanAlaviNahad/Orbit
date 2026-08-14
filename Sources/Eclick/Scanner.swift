@@ -20,15 +20,19 @@ enum ScanError: LocalizedError {
 struct ScanResult {
     let windowFrame: CGRect
     let targets: [ClickTarget]
+    let isComplete: Bool
 }
 
 final class TargetScanner: Sendable {
+    private static let ocrFallbackTargetThreshold = 48
+
     private struct WindowContext: @unchecked Sendable {
         let pid: pid_t
         let title: String
         let frame: CGRect
         let element: AXUIElement
         let windowNumber: CGWindowID?
+        let needsWarmRetry: Bool
     }
 
     private struct ElementSnapshot {
@@ -39,6 +43,17 @@ final class TargetScanner: Sendable {
         let frame: CGRect?
         let labelValues: [String]
         let value: String?
+        let isReliable: Bool
+    }
+
+    private struct AccessibilityScan {
+        let targets: [ClickTarget]
+        let isComplete: Bool
+    }
+
+    private enum TraversalOrder: Equatable {
+        case depthFirst
+        case breadthFirst
     }
 
     func scanFocusedWindow(pid: pid_t) async throws -> ScanResult {
@@ -46,26 +61,33 @@ final class TargetScanner: Sendable {
             throw ScanError.accessibilityUnavailable
         }
 
-        let context = try await Task.detached(priority: .userInitiated) {
+        let contextTask = Task.detached(priority: .userInitiated) {
             guard let context = Self.focusedWindow(pid: pid) else {
                 throw ScanError.noFocusedWindow
             }
             return context
-        }.value
+        }
+        let context = try await withTaskCancellationHandler {
+            try await contextTask.value
+        } onCancel: {
+            contextTask.cancel()
+        }
+        try Task.checkCancellation()
 
         let accessibilityTask = Task.detached(priority: .userInitiated) {
-            Self.accessibilityTargets(in: context)
+            Self.resilientAccessibilityTargets(in: context)
         }
         return try await withTaskCancellationHandler {
-            let accessibilityTargets = await accessibilityTask.value
+            let accessibilityScan = await accessibilityTask.value
             try Task.checkCancellation()
-
-            // Accessibility already describes Safari and native controls. OCR
-            // is much slower, so reserve it for windows where Accessibility
-            // found nothing instead of delaying every shortcut press.
             let ocrTargets: [ClickTarget]
-            if accessibilityTargets.isEmpty, PermissionCenter.screenRecordingGranted {
-                ocrTargets = (try? await Self.ocrTargets(in: context)) ?? []
+            if PermissionCenter.screenRecordingGranted
+                && (!accessibilityScan.isComplete
+                    || accessibilityScan.targets.count < Self.ocrFallbackTargetThreshold) {
+                ocrTargets = (try? await Self.ocrTargets(
+                    in: context,
+                    accurate: !accessibilityScan.isComplete
+                )) ?? []
             } else {
                 ocrTargets = []
             }
@@ -73,9 +95,10 @@ final class TargetScanner: Sendable {
             return ScanResult(
                 windowFrame: context.frame,
                 targets: TargetGeometry.merge(
-                    accessibility: accessibilityTargets,
+                    accessibility: accessibilityScan.targets,
                     ocr: ocrTargets
-                )
+                ),
+                isComplete: accessibilityScan.isComplete
             )
         } onCancel: {
             accessibilityTask.cancel()
@@ -84,65 +107,143 @@ final class TargetScanner: Sendable {
 
     private static func focusedWindow(pid: pid_t) -> WindowContext? {
         let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, 0.10)
-        guard let window: AXUIElement = attribute(kAXFocusedWindowAttribute, from: appElement),
-              let frame = elementFrame(window),
-              frame.width > 1,
-              frame.height > 1 else {
-            return nil
+        AXUIElementSetMessagingTimeout(appElement, 0.40)
+        let manuallyEnabled = enableEnhancedAccessibility(for: appElement)
+        let bundleIdentifier = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        let needsWarmRetry = manuallyEnabled || warmRetryBundleIdentifiers.contains(bundleIdentifier)
+
+        for attempt in 0..<3 {
+            if let window = focusedWindowElement(for: appElement),
+               let frame = elementFrame(window),
+               frame.width > 1,
+               frame.height > 1 {
+                let title: String = attribute(kAXTitleAttribute, from: window) ?? ""
+                let windowNumber: Int? = attribute("AXWindowNumber", from: window)
+                AXUIElementSetMessagingTimeout(window, 0.20)
+                return WindowContext(
+                    pid: pid,
+                    title: title,
+                    frame: frame,
+                    element: window,
+                    windowNumber: windowNumber.map(CGWindowID.init),
+                    needsWarmRetry: needsWarmRetry
+                )
+            }
+            guard attempt < 2, !Task.isCancelled else { break }
+            usleep(50_000)
         }
-        let title: String = attribute(kAXTitleAttribute, from: window) ?? ""
-        let windowNumber: Int? = attribute("AXWindowNumber", from: window)
-        AXUIElementSetMessagingTimeout(window, 0.10)
-        return WindowContext(
-            pid: pid,
-            title: title,
-            frame: frame,
-            element: window,
-            windowNumber: windowNumber.map(CGWindowID.init)
+        return nil
+    }
+
+    private static func focusedWindowElement(for application: AXUIElement) -> AXUIElement? {
+        if let focused: AXUIElement = attribute(kAXFocusedWindowAttribute, from: application) {
+            return focused
+        }
+        if let main: AXUIElement = attribute(kAXMainWindowAttribute, from: application) {
+            return main
+        }
+        if let focusedElement: AXUIElement = attribute(
+            kAXFocusedUIElementAttribute,
+            from: application
+        ), let containingWindow: AXUIElement = attribute("AXWindow", from: focusedElement) {
+            return containingWindow
+        }
+        let windows: [AXUIElement] = attribute(kAXWindowsAttribute, from: application) ?? []
+        return windows.first(where: { elementFrame($0).map(TargetGeometry.isUsable) == true })
+    }
+
+    private static func enableEnhancedAccessibility(for application: AXUIElement) -> Bool {
+        let manualStatus = AXUIElementSetAttributeValue(
+            application,
+            "AXManualAccessibility" as CFString,
+            kCFBooleanTrue
+        )
+        _ = AXUIElementSetAttributeValue(
+            application,
+            "AXEnhancedUserInterface" as CFString,
+            kCFBooleanTrue
+        )
+        return manualStatus == .success
+    }
+
+    private static func resilientAccessibilityTargets(in context: WindowContext) -> AccessibilityScan {
+        let first = accessibilityTargets(in: context, order: .depthFirst)
+        guard !Task.isCancelled else { return first }
+        guard context.needsWarmRetry || !first.isComplete || first.targets.count < 12 else {
+            return first
+        }
+
+        // Electron, Safari, and Finder can expose a cold or lazy tree on the
+        // first request. A differently ordered second pass both warms the tree
+        // and covers branches the first time budget may not have reached.
+        usleep(75_000)
+        let second = accessibilityTargets(in: context, order: .breadthFirst)
+        return AccessibilityScan(
+            targets: TargetGeometry.deduplicated(first.targets + second.targets),
+            isComplete: second.isComplete
         )
     }
 
-    private static func accessibilityTargets(in context: WindowContext) -> [ClickTarget] {
-        let maximumNodeCount = 6_000
-        let deadline = ContinuousClock.now.advanced(by: .milliseconds(500))
-        var queue: [AXUIElement] = [context.element]
+    private static func accessibilityTargets(
+        in context: WindowContext,
+        order: TraversalOrder
+    ) -> AccessibilityScan {
+        let maximumNodeCount = 12_000
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(1_250))
+        var pending: [AXUIElement] = [context.element]
         var cursor = 0
         var visited: [CFHashCode: [AXUIElement]] = [:]
         var enqueued: [CFHashCode: [AXUIElement]] = [:]
         var targets: [ClickTarget] = []
+        var enqueuedCount = 1
+        var hitNodeLimit = false
+        var encounteredReadFailure = false
         _ = insertIdentity(context.element, into: &enqueued)
 
-        while cursor < queue.count,
-              cursor < maximumNodeCount,
-              ContinuousClock.now < deadline,
-              !Task.isCancelled {
-            let element = queue[cursor]
-            cursor += 1
-            AXUIElementSetMessagingTimeout(element, 0.10)
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            let nextElement: AXUIElement?
+            switch order {
+            case .depthFirst:
+                nextElement = pending.popLast()
+            case .breadthFirst:
+                if cursor < pending.count {
+                    nextElement = pending[cursor]
+                    cursor += 1
+                } else {
+                    nextElement = nil
+                }
+            }
+            guard let element = nextElement else { break }
+            AXUIElementSetMessagingTimeout(element, 0.15)
             guard insertIdentity(element, into: &visited) else { continue }
 
-            let snapshot = elementSnapshot(element)
+            let snapshot = elementSnapshot(element, deadline: deadline)
+            if !snapshot.isReliable { encounteredReadFailure = true }
 
-            if !snapshot.children.isEmpty {
-                for child in snapshot.children where queue.count < maximumNodeCount {
-                    if insertIdentity(child, into: &enqueued) {
-                        queue.append(child)
-                    }
-                }
-            } else if alternateChildRelationshipRoles.contains(snapshot.role) {
-                // Some apps omit AXChildren but expose an alternate relationship.
+            var children = snapshot.children
+            if alternateChildRelationshipRoles.contains(snapshot.role) {
+                // Finder, Safari, and Electron may expose useful rows or visible
+                // controls alongside AXChildren rather than instead of it.
                 for relationship in childRelationshipAttributes.dropFirst() {
                     guard ContinuousClock.now < deadline else { break }
-                    guard let children: [AXUIElement] = attribute(relationship, from: element) else {
+                    let relationshipRead: (value: [AXUIElement]?, transientFailure: Bool) =
+                        attributeResult(relationship, from: element)
+                    if relationshipRead.transientFailure { encounteredReadFailure = true }
+                    guard let relatedChildren = relationshipRead.value else {
                         continue
                     }
-                    for child in children where queue.count < maximumNodeCount {
-                        if insertIdentity(child, into: &enqueued) {
-                            queue.append(child)
-                        }
-                    }
-                    if !children.isEmpty { break }
+                    children.append(contentsOf: relatedChildren)
+                }
+            }
+            let orderedChildren = order == .depthFirst ? Array(children.reversed()) : children
+            for child in orderedChildren {
+                guard enqueuedCount < maximumNodeCount else {
+                    hitNodeLimit = true
+                    break
+                }
+                if insertIdentity(child, into: &enqueued) {
+                    pending.append(child)
+                    enqueuedCount += 1
                 }
             }
 
@@ -155,10 +256,11 @@ final class TargetScanner: Sendable {
                 continue
             }
             let roleIsInteractive = interactiveRoles.contains(snapshot.role)
-            guard roleIsInteractive || actionCandidateRoles.contains(snapshot.role) else { continue }
-            let actions = actionNames(element)
+            let actionRead = actionNames(element)
+            if actionRead.transientFailure { encounteredReadFailure = true }
             guard ContinuousClock.now < deadline else { break }
-            guard roleIsInteractive || actions.contains(where: actionableActions.contains) else { continue }
+            guard roleIsInteractive
+                    || actionRead.names.contains(where: actionableActions.contains) else { continue }
             let label = elementLabel(from: snapshot)
 
             targets.append(ClickTarget(
@@ -167,54 +269,98 @@ final class TargetScanner: Sendable {
                 label: label,
                 source: .accessibility,
                 axElement: element,
-                axAction: preferredAction(from: actions)
+                axAction: preferredAction(from: actionRead.names)
             ))
         }
 
-        return TargetGeometry.deduplicated(targets)
+        let exhausted: Bool
+        switch order {
+        case .depthFirst:
+            exhausted = pending.isEmpty
+        case .breadthFirst:
+            exhausted = cursor >= pending.count
+        }
+        return AccessibilityScan(
+            targets: TargetGeometry.deduplicated(targets),
+            isComplete: exhausted
+                && !hitNodeLimit
+                && !encounteredReadFailure
+                && ContinuousClock.now < deadline
+                && !Task.isCancelled
+        )
     }
 
-    private static func elementSnapshot(_ element: AXUIElement) -> ElementSnapshot {
+    private static func elementSnapshot(
+        _ element: AXUIElement,
+        deadline: ContinuousClock.Instant
+    ) -> ElementSnapshot {
         let keys = snapshotAttributeKeys
         var rawValues: CFArray?
-        let status = AXUIElementCopyMultipleAttributeValues(
-            element,
-            keys as CFArray,
-            AXCopyMultipleAttributeOptions(rawValue: 0),
-            &rawValues
-        )
+        var status = AXError.failure
+        for attempt in 0..<2 where ContinuousClock.now < deadline {
+            status = AXUIElementCopyMultipleAttributeValues(
+                element,
+                keys as CFArray,
+                AXCopyMultipleAttributeOptions(rawValue: 0),
+                &rawValues
+            )
+            if status == .success { break }
+            guard status == .cannotComplete, attempt == 0 else { break }
+            usleep(5_000)
+        }
         guard status == .success,
               let values = rawValues as? [Any],
               values.count == keys.count else {
-            return individualElementSnapshot(element)
+            return individualElementSnapshot(
+                element,
+                deadline: deadline,
+                initiallyReliable: status != .cannotComplete
+            )
         }
 
+        let children = values[0] as? [AXUIElement] ?? []
+        let role = values[1] as? String ?? ""
         let position = axValue(values[4])
         let size = axValue(values[5])
         return ElementSnapshot(
-            children: values[0] as? [AXUIElement] ?? [],
-            role: values[1] as? String ?? "",
+            children: children,
+            role: role,
             enabled: values[2] as? Bool ?? true,
             hidden: values[3] as? Bool ?? false,
             frame: frame(position: position, size: size),
             labelValues: values[6...11].compactMap { $0 as? String },
-            value: values[12] as? String
+            value: values[12] as? String,
+            isReliable: !role.isEmpty
+                && (!alternateChildRelationshipRoles.contains(role)
+                    || values[0] is [AXUIElement])
         )
     }
 
-    private static func individualElementSnapshot(_ element: AXUIElement) -> ElementSnapshot {
-        let position: AXValue? = attribute(kAXPositionAttribute as String, from: element)
-        let size: AXValue? = attribute(kAXSizeAttribute as String, from: element)
+    private static func individualElementSnapshot(
+        _ element: AXUIElement,
+        deadline: ContinuousClock.Instant,
+        initiallyReliable: Bool
+    ) -> ElementSnapshot {
+        var isReliable = initiallyReliable
+        func read<T>(_ name: String) -> T? {
+            guard ContinuousClock.now < deadline else { return nil }
+            let result: (value: T?, transientFailure: Bool) = attributeResult(name, from: element)
+            if result.transientFailure { isReliable = false }
+            return result.value
+        }
+        let position: AXValue? = read(kAXPositionAttribute as String)
+        let size: AXValue? = read(kAXSizeAttribute as String)
         return ElementSnapshot(
-            children: attribute(kAXChildrenAttribute as String, from: element) ?? [],
-            role: attribute(kAXRoleAttribute as String, from: element) ?? "",
-            enabled: attribute(kAXEnabledAttribute as String, from: element) ?? true,
-            hidden: attribute(kAXHiddenAttribute as String, from: element) ?? false,
+            children: read(kAXChildrenAttribute as String) ?? [],
+            role: read(kAXRoleAttribute as String) ?? "",
+            enabled: read(kAXEnabledAttribute as String) ?? true,
+            hidden: read(kAXHiddenAttribute as String) ?? false,
             frame: frame(position: position, size: size),
             labelValues: snapshotLabelKeys.compactMap { key in
-                attribute(key, from: element) as String?
+                read(key) as String?
             },
-            value: attribute(kAXValueAttribute as String, from: element)
+            value: read(kAXValueAttribute as String),
+            isReliable: isReliable
         )
     }
 
@@ -275,7 +421,10 @@ final class TargetScanner: Sendable {
         kAXSizeAttribute as String
     ] + snapshotLabelKeys + [kAXValueAttribute as String]
 
-    private static func ocrTargets(in context: WindowContext) async throws -> [ClickTarget] {
+    private static func ocrTargets(
+        in context: WindowContext,
+        accurate: Bool
+    ) async throws -> [ClickTarget] {
         try Task.checkCancellation()
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
@@ -293,8 +442,11 @@ final class TargetScanner: Sendable {
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let configuration = SCStreamConfiguration()
-        configuration.width = max(1, Int(window.frame.width * 2))
-        configuration.height = max(1, Int(window.frame.height * 2))
+        let sourceArea = max(1, window.frame.width * window.frame.height)
+        let maximumPixelArea: CGFloat = 8_000_000
+        let captureScale = min(2, sqrt(maximumPixelArea / sourceArea))
+        configuration.width = max(1, Int(window.frame.width * captureScale))
+        configuration.height = max(1, Int(window.frame.height * captureScale))
         configuration.showsCursor = false
         configuration.ignoreShadowsSingleWindow = true
         let image = try await SCScreenshotManager.captureImage(
@@ -304,13 +456,16 @@ final class TargetScanner: Sendable {
         try Task.checkCancellation()
 
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
-        request.usesLanguageCorrection = false
+        request.recognitionLevel = accurate ? .accurate : .fast
+        request.usesLanguageCorrection = accurate
         let handler = VNImageRequestHandler(cgImage: image, orientation: .up)
         try handler.perform([request])
         try Task.checkCancellation()
 
-        return (request.results ?? []).compactMap { observation in
+        return (request.results ?? [])
+            .sorted(by: { $0.confidence > $1.confidence })
+            .prefix(250)
+            .compactMap { observation in
             guard observation.confidence >= 0.55,
                   let candidate = observation.topCandidates(1).first else {
                 return nil
@@ -357,15 +512,25 @@ final class TargetScanner: Sendable {
             kAXPressAction as String,
             kAXConfirmAction as String,
             "AXPick",
-            "AXOpen"
+            "AXOpen",
+            "AXShowMenu"
         ]
         return preference.first(where: actions.contains)
     }
 
-    private static func actionNames(_ element: AXUIElement) -> [String] {
-        var value: CFArray?
-        guard AXUIElementCopyActionNames(element, &value) == .success else { return [] }
-        return value as? [String] ?? []
+    private static func actionNames(
+        _ element: AXUIElement
+    ) -> (names: [String], transientFailure: Bool) {
+        for attempt in 0..<2 {
+            var value: CFArray?
+            let status = AXUIElementCopyActionNames(element, &value)
+            if status == .success { return (value as? [String] ?? [], false) }
+            guard status == .cannotComplete, attempt == 0 else {
+                return ([], status == .cannotComplete)
+            }
+            usleep(5_000)
+        }
+        return ([], true)
     }
 
     private static let childRelationshipAttributes = [
@@ -378,6 +543,14 @@ final class TargetScanner: Sendable {
         "AXChildrenInNavigationOrder"
     ]
 
+    private static let warmRetryBundleIdentifiers: Set<String> = [
+        "com.apple.finder",
+        "com.apple.Safari",
+        "com.hnc.Discord",
+        "ph.telegra.Telegraph",
+        "ru.keepcoder.Telegram"
+    ]
+
     private static let actionableActions: Set<String> = [
         kAXPressAction as String,
         kAXConfirmAction as String,
@@ -386,17 +559,14 @@ final class TargetScanner: Sendable {
         "AXOpen"
     ]
 
-    private static let actionCandidateRoles: Set<String> = [
-        "AXGroup",
-        "AXImage"
-    ]
-
     private static let alternateChildRelationshipRoles: Set<String> = [
         "AXWindow",
         "AXWebArea",
         "AXGroup",
         "AXScrollArea",
         "AXList",
+        "AXBrowser",
+        "AXRow",
         "AXTable",
         "AXOutline",
         "AXToolbar",
@@ -417,6 +587,8 @@ final class TargetScanner: Sendable {
         "AXDisclosureTriangle",
         "AXTab",
         "AXCell",
+        "AXRow",
+        "AXListItem",
         "AXOutlineRow",
         "AXTableRow",
         "AXToolbarItem",
@@ -496,11 +668,24 @@ final class TargetScanner: Sendable {
     }
 
     private static func attribute<T>(_ name: String, from element: AXUIElement) -> T? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else {
-            return nil
+        let result: (value: T?, transientFailure: Bool) = attributeResult(name, from: element)
+        return result.value
+    }
+
+    private static func attributeResult<T>(
+        _ name: String,
+        from element: AXUIElement
+    ) -> (value: T?, transientFailure: Bool) {
+        for attempt in 0..<2 {
+            var value: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+            if status == .success { return (value as? T, false) }
+            guard status == .cannotComplete, attempt == 0 else {
+                return (nil, status == .cannotComplete)
+            }
+            usleep(5_000)
         }
-        return value as? T
+        return (nil, true)
     }
 
     private static func insertIdentity(
@@ -547,9 +732,12 @@ enum TargetActivator {
             if kind == .singleClick,
                let element = target.axElement,
                let action = target.axAction {
-                AXUIElementSetMessagingTimeout(element, 0.05)
-                if AXUIElementPerformAction(element, action as CFString) == .success {
-                    return
+                AXUIElementSetMessagingTimeout(element, 0.20)
+                for attempt in 0..<2 {
+                    let status = AXUIElementPerformAction(element, action as CFString)
+                    if status == .success { return }
+                    guard status == .cannotComplete, attempt == 0 else { break }
+                    usleep(10_000)
                 }
             }
 

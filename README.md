@@ -2,7 +2,7 @@
 
 Eclick is a local macOS menu bar utility for clicking visible controls without leaving the keyboard. Press **Command-E**, then search by element name or visible home-row hint and press Enter.
 
-Eclick scans only the focused window. It uses macOS Accessibility for native controls and optionally fills accessibility gaps with on-device Vision OCR. No data leaves the Mac.
+Eclick scans only the focused window. It uses macOS Accessibility for native controls and optionally fills sparse or incomplete scans with on-device Vision OCR. No data leaves the Mac.
 
 ## Requirements
 
@@ -36,11 +36,13 @@ Always grant permissions to the installed copy at `~/Applications/Eclick.app`. B
 1. Focus the window containing the control.
 2. Press **Command-E**.
 3. Type part of the control name. Search ignores case, accents, and punctuation; for example, `settings` or `set-` matches “Settings.”
-4. Press Enter to click the highlighted result, Option-Enter to double-click it, or Shift-Enter to right-click it. Use Tab, Shift-Tab, Up, or Down to select another match.
+4. Press Enter to click the highlighted element or run the highlighted window command. Option-Enter double-clicks elements; Shift-Enter right-clicks them. Use Tab, Shift-Tab, Up, or Down to select another match.
 5. Every target keeps a visible home-row hint. Type either an element name or its hint, then press Enter. No modifier key is needed.
 6. Press Escape or Command-E again to cancel. Backspace edits the unified search.
 
 Accessibility controls use their semantic action when possible. Other targets receive a left click at their center, which moves the pointer. OCR text is only added where it does not overlap an Accessibility target; some detected text may not actually be clickable.
+
+Window arrangement lives in the same search box. Search for `left`, `right`, `top`, `bottom`, `center`, `fill`, `maximize`, or `full screen`, then press Enter. Eclick invokes the matching macOS Window menu command when available, preserving system tiling gaps, Stage Manager behavior, the menu bar, and the Dock; direct Accessibility resizing remains a fallback.
 
 The Settings window can change the global shortcut, show permission status, and enable launch at login. A shortcut must contain Command, Control, or Option. If another utility already owns it, Eclick keeps the previous working shortcut.
 
@@ -54,7 +56,7 @@ The installed command-line toolchain does not include a usable XCTest runtime, s
 ./Scripts/test-core.sh
 ```
 
-The tests cover home-row code boundaries, prefix safety, search normalization and ranking, geometry validation, and Accessibility/OCR merging.
+The tests cover home-row code boundaries, prefix safety, search normalization and ranking, geometry validation, Accessibility/OCR merging, and window arrangement geometry.
 
 ## Update or uninstall
 

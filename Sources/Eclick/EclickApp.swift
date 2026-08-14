@@ -32,14 +32,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 final class AppController: NSObject {
-    private struct CachedScan {
-        let pid: pid_t
-        let result: ScanResult
-        let createdAt: Date
-    }
-
-    private static let scanCacheLifetime: TimeInterval = 120
-
     private let scanner = TargetScanner()
     private let hotKey = HotKeyRegistrar()
     private let overlay = HintOverlayController()
@@ -50,10 +42,11 @@ final class AppController: NSObject {
     private var settingsWindow: NSWindow?
     private var scanTask: Task<Void, Never>?
     private var scanID: UUID?
-    private var cacheRefreshTask: Task<Void, Never>?
-    private var cacheRefreshID: UUID?
+    private var arrangementTask: Task<Void, Never>?
+    private var arrangementID: UUID?
     private var activateMenuItem: NSMenuItem?
-    private var cachedScan: CachedScan?
+    private var lastTargetPID: pid_t?
+    private var activeTargetPID: pid_t?
 
     override init() {
         super.init()
@@ -85,22 +78,18 @@ final class AppController: NSObject {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil
         )
-        Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(100))
-            guard let self,
-                  let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
-                return
-            }
-            self.scheduleCacheRefresh(pid: pid)
+        if let application = NSWorkspace.shared.frontmostApplication,
+           application.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            lastTargetPID = application.processIdentifier
         }
     }
 
     func shutdown() {
         cancelHintMode()
         input.shutdown()
-        cacheRefreshTask?.cancel()
-        cacheRefreshTask = nil
-        cacheRefreshID = nil
+        arrangementTask?.cancel()
+        arrangementTask = nil
+        arrangementID = nil
         hotKey.shutdown()
         preferences.shutdown()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
@@ -118,7 +107,13 @@ final class AppController: NSObject {
               application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
             return
         }
-        scheduleCacheRefresh(pid: application.processIdentifier, delay: .milliseconds(100))
+        if application.processIdentifier != lastTargetPID {
+            cancelHintMode(discardOverlay: true)
+            arrangementTask?.cancel()
+            arrangementTask = nil
+            arrangementID = nil
+        }
+        lastTargetPID = application.processIdentifier
     }
 
     @objc private func toggleHintModeFromMenu() {
@@ -142,6 +137,30 @@ final class AppController: NSObject {
         settingsWindow = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func runWindowArrangement(_ arrangement: WindowArrangement, pid: pid_t) {
+        cancelHintMode(discardOverlay: true)
+        arrangementTask?.cancel()
+        let id = UUID()
+        arrangementID = id
+        arrangementTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.arrangementID == id {
+                    self.arrangementTask = nil
+                    self.arrangementID = nil
+                }
+            }
+            do {
+                try await WindowArranger.arrangeFocusedWindow(pid: pid, arrangement: arrangement)
+            } catch is CancellationError {
+                return
+            } catch {
+                NSSound.beep()
+                self.preferences.message = error.localizedDescription
+            }
+        }
     }
 
     @objc private func quit() {
@@ -234,16 +253,8 @@ final class AppController: NSObject {
             showSettings()
             return
         }
-        guard let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+        guard let targetPID = targetApplicationPID() else {
             NSSound.beep()
-            return
-        }
-
-        if let cachedScan,
-           cachedScan.pid == targetPID,
-           Date().timeIntervalSince(cachedScan.createdAt) <= Self.scanCacheLifetime {
-            present(cachedScan.result)
-            scheduleCacheRefresh(pid: targetPID)
             return
         }
 
@@ -265,15 +276,7 @@ final class AppController: NSObject {
             do {
                 let result = try await self.scanner.scanFocusedWindow(pid: targetPID)
                 guard !Task.isCancelled, self.scanID == id else { return }
-                // Safari can briefly expose an empty Accessibility tree while a
-                // page is updating. Do not make that transient miss persist for
-                // the cache lifetime; the next shortcut press must scan again.
-                if result.targets.isEmpty {
-                    self.cachedScan = nil
-                } else {
-                    self.cachedScan = CachedScan(pid: targetPID, result: result, createdAt: Date())
-                }
-                self.present(result)
+                self.present(result, targetPID: targetPID)
             } catch {
                 guard !Task.isCancelled else { return }
                 self.preferences.message = error.localizedDescription
@@ -318,58 +321,27 @@ final class AppController: NSObject {
     }
 
     private func activate(_ target: ClickTarget, kind: TargetActivator.Kind) {
-        let targetPID = cachedScan?.pid
-        cancelHintMode(discardOverlay: true)
-        TargetActivator.activate(target, kind: kind)
-        if let targetPID {
-            scheduleCacheRefresh(pid: targetPID, delay: .milliseconds(250))
-        }
-    }
-
-    private func scheduleCacheRefresh(
-        pid: pid_t,
-        delay: Duration = .zero
-    ) {
-        cacheRefreshTask?.cancel()
-        let id = UUID()
-        cacheRefreshID = id
-        cacheRefreshTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                if self.cacheRefreshID == id {
-                    self.cacheRefreshTask = nil
-                    self.cacheRefreshID = nil
-                }
-            }
-            if delay > .zero {
-                try? await Task.sleep(for: delay)
-            }
-            guard !Task.isCancelled,
-                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
-                return
-            }
-            guard let result = try? await self.scanner.scanFocusedWindow(pid: pid),
-                  !Task.isCancelled,
-                  self.cacheRefreshID == id,
-                  !result.targets.isEmpty,
-                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
-                return
-            }
-            self.cachedScan = CachedScan(pid: pid, result: result, createdAt: Date())
-        }
-    }
-
-    private func present(_ result: ScanResult) {
-        let assignments = HintGenerator.assign(to: result.targets)
-        guard !assignments.isEmpty else {
-            NSSound.beep()
+        if let arrangement = target.windowArrangement,
+           let pid = activeTargetPID {
+            runWindowArrangement(arrangement, pid: pid)
             return
         }
+        cancelHintMode(discardOverlay: true)
+        TargetActivator.activate(target, kind: kind)
+    }
+
+    private func present(_ result: ScanResult, targetPID: pid_t) {
+        let elementAssignments = HintGenerator.assign(to: result.targets)
+        let commandAssignments = WindowCommandCatalog.targets(windowFrame: result.windowFrame).map {
+            HintAssignment(target: $0, code: "")
+        }
+        let assignments = elementAssignments + commandAssignments
         overlay.show(assignments: assignments, windowFrame: result.windowFrame)
         guard overlay.isPresented else {
             NSSound.beep()
             return
         }
+        activeTargetPID = targetPID
         guard input.start() else {
             overlay.dismiss()
             preferences.message = "Keyboard monitoring could not start. Recheck Accessibility permission."
@@ -388,7 +360,18 @@ final class AppController: NSObject {
         } else {
             overlay.hide()
         }
+        activeTargetPID = nil
         restoreStatusIcon()
+    }
+
+    private func targetApplicationPID() -> pid_t? {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        if let application = NSWorkspace.shared.frontmostApplication,
+           application.processIdentifier != ownPID {
+            lastTargetPID = application.processIdentifier
+            return application.processIdentifier
+        }
+        return lastTargetPID
     }
 
     private func restoreStatusIcon() {

@@ -174,6 +174,138 @@ enum CoreSelfTests {
         )
         check(TargetSearch.matches(query: "unfindable", targets: searchTargets).isEmpty, "search no match")
 
+        let visibleFrame = CGRect(x: 100, y: 50, width: 1001, height: 801)
+        let currentWindow = CGRect(x: 240, y: 160, width: 400, height: 300)
+        check(
+            WindowGeometry.frame(
+                for: .tileLeft,
+                currentFrame: currentWindow,
+                visibleFrame: visibleFrame
+            ) == CGRect(x: 100, y: 50, width: 500, height: 801),
+            "left window tile"
+        )
+        check(
+            WindowGeometry.frame(
+                for: .tileRight,
+                currentFrame: currentWindow,
+                visibleFrame: visibleFrame
+            ) == CGRect(x: 600, y: 50, width: 501, height: 801),
+            "right window tile keeps odd pixel"
+        )
+        check(
+            WindowGeometry.frame(
+                for: .tileTop,
+                currentFrame: currentWindow,
+                visibleFrame: visibleFrame
+            ) == CGRect(x: 100, y: 50, width: 1001, height: 400),
+            "top window tile"
+        )
+        check(
+            WindowGeometry.frame(
+                for: .tileBottom,
+                currentFrame: currentWindow,
+                visibleFrame: visibleFrame
+            ) == CGRect(x: 100, y: 450, width: 1001, height: 401),
+            "bottom window tile keeps odd pixel"
+        )
+        check(
+            WindowGeometry.frame(
+                for: .center,
+                currentFrame: currentWindow,
+                visibleFrame: visibleFrame
+            ) == CGRect(x: 400.5, y: 300.5, width: 400, height: 300),
+            "center window preserves size"
+        )
+        check(
+            WindowGeometry.frame(
+                for: .center,
+                currentFrame: CGRect(x: 0, y: 0, width: 2_000, height: 1_000),
+                visibleFrame: visibleFrame
+            ) == visibleFrame,
+            "center window clamps oversize frame"
+        )
+        check(
+            WindowGeometry.frame(
+                for: .fill,
+                currentFrame: currentWindow,
+                visibleFrame: visibleFrame
+            ) == visibleFrame,
+            "fill window"
+        )
+        check(WindowArrangement.allCases.map(\.displayName) == [
+            "Tile Window Left",
+            "Tile Window Right",
+            "Tile Window Top",
+            "Tile Window Bottom",
+            "Center Window",
+            "Fill Window",
+            "Full Screen"
+        ], "window action names")
+        let windowCommands = WindowCommandCatalog.targets(windowFrame: visibleFrame)
+        let commandAssignments = windowCommands.map { HintAssignment(target: $0, code: "") }
+        let commandQueries: [(String, WindowArrangement)] = [
+            ("left", .tileLeft),
+            ("right half", .tileRight),
+            ("top", .tileTop),
+            ("bottom", .tileBottom),
+            ("centre", .center),
+            ("maximize", .fill),
+            ("full screen", .fullScreen)
+        ]
+        for (query, arrangement) in commandQueries {
+            check(
+                TargetSearch.matches(query: query, assignments: commandAssignments)
+                    .first?.target.windowArrangement == arrangement,
+                "window command search: \(query)"
+            )
+        }
+        let leftElement = target(x: 0, y: 0, label: "Left")
+        check(
+            TargetSearch.matches(
+                query: "left",
+                targets: [leftElement] + windowCommands
+            ).first?.target.windowArrangement == .tileLeft,
+            "exact window command ranks before same-name element"
+        )
+        check(
+            TargetSearch.matches(
+                query: "left",
+                assignments: [HintAssignment(target: leftElement, code: "A")] + commandAssignments
+            ).first?.target.windowArrangement == .tileLeft,
+            "window command ranking survives hint assignments"
+        )
+        check(
+            commandAssignments.allSatisfy { $0.code.isEmpty },
+            "window commands do not consume visible hint codes"
+        )
+        check(
+            WindowGeometry.accessibilityFrame(
+                from: CGRect(x: -1440, y: 100, width: 1440, height: 900),
+                primaryScreenTop: 900
+            ) == CGRect(x: -1440, y: -100, width: 1440, height: 900),
+            "secondary display converts to Accessibility coordinates"
+        )
+        let leftDisplay = CGRect(x: -100, y: 0, width: 100, height: 100)
+        let rightDisplay = CGRect(x: 0, y: 0, width: 100, height: 100)
+        check(
+            WindowGeometry.bestVisibleFrame(
+                for: CGRect(x: -20, y: 20, width: 80, height: 60),
+                in: [leftDisplay, rightDisplay]
+            ) == rightDisplay,
+            "display selection uses greatest overlap"
+        )
+        check(
+            WindowGeometry.bestVisibleFrame(
+                for: CGRect(x: -250, y: 20, width: 40, height: 40),
+                in: [leftDisplay, rightDisplay]
+            ) == leftDisplay,
+            "offscreen window selects nearest display"
+        )
+        check(
+            WindowGeometry.bestVisibleFrame(for: currentWindow, in: []) == nil,
+            "display selection handles no screens"
+        )
+
         if failures.isEmpty {
             print("Core self-tests passed")
         } else {

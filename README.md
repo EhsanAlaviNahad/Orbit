@@ -40,6 +40,19 @@ Always grant permissions to the installed copy at `~/Applications/Eclick.app`. B
 5. Every target keeps a visible home-row hint. Type either an element name or its hint, then press Enter. No modifier key is needed.
 6. Press Escape or Command-E again to cancel. Backspace edits the unified search.
 
+### Keyboard controls
+
+| Keys | Action |
+| --- | --- |
+| Enter | Left-click the selected target |
+| Option-Enter | Double-click the selected target |
+| Shift-Enter | Right-click the selected target |
+| Tab / Shift-Tab / Up / Down | Select the next / previous match |
+| Control-Up / Control-Down | Scroll the focused app while hints stay open |
+| Escape / Command-E | Cancel hint mode |
+
+Control-Arrow scrolling uses a small wheel event at the center of the active window; it has no settings slider.
+
 Accessibility controls use their semantic action when possible. Other targets receive a left click at their center, which moves the pointer. OCR text is only added where it does not overlap an Accessibility target; some detected text may not actually be clickable.
 
 Visible Dock items also receive hints. Activating one uses its Accessibility action to open or switch to the application.
@@ -60,7 +73,7 @@ The installed command-line toolchain does not include a usable XCTest runtime, s
 ./Scripts/test-core.sh
 ```
 
-The tests cover home-row code boundaries, prefix safety, search normalization and ranking, Control-Arrow scroll classification, exact system-command parsing and confirmation, mock-only system execution, geometry validation, Accessibility/OCR merging, and window arrangement geometry.
+The tests cover home-row code boundaries, prefix safety, search normalization and ranking, Control-Arrow scroll classification and wheel-event construction, exact system-command parsing and confirmation, mock-only system execution, hint color validation and contrast selection, geometry validation, Accessibility/OCR merging, and window arrangement geometry.
 
 ## Update or uninstall
 

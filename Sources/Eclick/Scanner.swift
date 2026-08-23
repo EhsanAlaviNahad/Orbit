@@ -105,6 +105,66 @@ final class TargetScanner: Sendable {
         }
     }
 
+    func scanDockTargets() async -> [ClickTarget] {
+        guard PermissionCenter.accessibilityGranted,
+              let pid = NSRunningApplication.runningApplications(
+                  withBundleIdentifier: "com.apple.dock"
+              ).first?.processIdentifier else {
+            return []
+        }
+        let task = Task.detached(priority: .userInitiated) {
+            Self.dockTargets(pid: pid)
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private static func dockTargets(pid: pid_t) -> [ClickTarget] {
+        let root = AXUIElementCreateApplication(pid)
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(400))
+        var pending = [root]
+        var visited: [CFHashCode: [AXUIElement]] = [:]
+        var targets: [ClickTarget] = []
+        var visitedCount = 0
+
+        while let element = pending.popLast(),
+              visitedCount < 1_000,
+              ContinuousClock.now < deadline,
+              !Task.isCancelled {
+            AXUIElementSetMessagingTimeout(element, 0.10)
+            guard insertIdentity(element, into: &visited) else { continue }
+            visitedCount += 1
+            for relationship in childRelationshipAttributes {
+                let children: [AXUIElement] = attribute(relationship, from: element) ?? []
+                pending.append(contentsOf: children)
+            }
+
+            let role: String = attribute(kAXRoleAttribute, from: element) ?? ""
+            let subrole: String = attribute(kAXSubroleAttribute, from: element) ?? ""
+            guard let frame = elementFrame(element) else { continue }
+            let actions = actionNames(element).names
+            guard DockTargetPolicy.isEligible(
+                role: role,
+                subrole: subrole,
+                actions: actions,
+                frame: frame
+            ) else {
+                continue
+            }
+            targets.append(ClickTarget(
+                frame: frame,
+                label: elementLabel(element),
+                source: .dock,
+                axElement: element,
+                axAction: ActivationActionPolicy.preferredAction(from: actions)
+            ))
+        }
+        return TargetGeometry.sortedTopLeft(TargetGeometry.deduplicated(targets))
+    }
+
     private static func focusedWindow(pid: pid_t) -> WindowContext? {
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, 0.40)
@@ -260,7 +320,9 @@ final class TargetScanner: Sendable {
             if actionRead.transientFailure { encounteredReadFailure = true }
             guard ContinuousClock.now < deadline else { break }
             guard roleIsInteractive
-                    || actionRead.names.contains(where: actionableActions.contains) else { continue }
+                    || actionRead.names.contains(where: ActivationActionPolicy.supportedActions.contains) else {
+                continue
+            }
             let label = elementLabel(from: snapshot)
 
             targets.append(ClickTarget(
@@ -269,7 +331,7 @@ final class TargetScanner: Sendable {
                 label: label,
                 source: .accessibility,
                 axElement: element,
-                axAction: preferredAction(from: actionRead.names)
+                axAction: ActivationActionPolicy.preferredAction(from: actionRead.names)
             ))
         }
 
@@ -500,22 +562,11 @@ final class TargetScanner: Sendable {
     }
 
     private static func isInteractive(_ element: AXUIElement, actions: [String]) -> Bool {
-        if actions.contains(where: actionableActions.contains) {
+        if actions.contains(where: ActivationActionPolicy.supportedActions.contains) {
             return true
         }
         let role: String = attribute(kAXRoleAttribute, from: element) ?? ""
         return interactiveRoles.contains(role)
-    }
-
-    private static func preferredAction(from actions: [String]) -> String? {
-        let preference = [
-            kAXPressAction as String,
-            kAXConfirmAction as String,
-            "AXPick",
-            "AXOpen",
-            "AXShowMenu"
-        ]
-        return preference.first(where: actions.contains)
     }
 
     private static func actionNames(
@@ -549,14 +600,6 @@ final class TargetScanner: Sendable {
         "com.hnc.Discord",
         "ph.telegra.Telegraph",
         "ru.keepcoder.Telegram"
-    ]
-
-    private static let actionableActions: Set<String> = [
-        kAXPressAction as String,
-        kAXConfirmAction as String,
-        "AXPick",
-        "AXShowMenu",
-        "AXOpen"
     ]
 
     private static let alternateChildRelationshipRoles: Set<String> = [

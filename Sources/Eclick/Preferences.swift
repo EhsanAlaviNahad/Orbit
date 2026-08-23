@@ -9,6 +9,7 @@ enum HintLabelAppearance: String, CaseIterable, Identifiable {
     case glass
     case accent
     case white
+    case custom
 
     var id: Self { self }
 
@@ -18,6 +19,7 @@ enum HintLabelAppearance: String, CaseIterable, Identifiable {
         case .glass: "Dark Glass"
         case .accent: "Accent Color"
         case .white: "White"
+        case .custom: "Custom"
         }
     }
 }
@@ -33,14 +35,21 @@ final class PreferencesModel: ObservableObject {
     @Published var message: String?
     @Published private(set) var hintLabelSize: Double
     @Published private(set) var hintLabelAppearance: HintLabelAppearance
+    @Published private(set) var hintLabelCustomColor: HintColorComponents
 
     var onShortcutChange: ((KeyboardShortcut) throws -> Void)?
-    var onHintLabelStyleChange: ((CGFloat, HintLabelAppearance) -> Void)?
+    var onHintLabelStyleChange: ((CGFloat, HintLabelAppearance, HintColorComponents) -> Void)?
 
     private var keyMonitor: Any?
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
+        func storedComponent(_ key: String, fallback: Double) -> Double {
+            guard let number = defaults.object(forKey: key) as? NSNumber else { return fallback }
+            let value = number.doubleValue
+            return value.isFinite && (0...1).contains(value) ? value : fallback
+        }
+
         self.defaults = defaults
         hintLabelSize = defaults.object(forKey: "hints.fontSize") == nil
             ? 13
@@ -50,6 +59,20 @@ final class PreferencesModel: ObservableObject {
                 ? "white"
                 : defaults.string(forKey: "hints.appearance") ?? "classic"
         ) ?? .classic
+        hintLabelCustomColor = HintColorComponents(
+            red: storedComponent(
+                "hints.customColor.red",
+                fallback: HintColorComponents.defaultCustom.red
+            ),
+            green: storedComponent(
+                "hints.customColor.green",
+                fallback: HintColorComponents.defaultCustom.green
+            ),
+            blue: storedComponent(
+                "hints.customColor.blue",
+                fallback: HintColorComponents.defaultCustom.blue
+            )
+        ) ?? .defaultCustom
         if defaults.object(forKey: "shortcut.keyCode") != nil {
             shortcut = KeyboardShortcut(
                 keyCode: UInt32(defaults.integer(forKey: "shortcut.keyCode")),
@@ -101,13 +124,33 @@ final class PreferencesModel: ObservableObject {
     func setHintLabelSize(_ size: Double) {
         hintLabelSize = min(20, max(10, size))
         defaults.set(hintLabelSize, forKey: "hints.fontSize")
-        onHintLabelStyleChange?(CGFloat(hintLabelSize), hintLabelAppearance)
+        notifyHintStyleChange()
     }
 
     func setHintLabelAppearance(_ appearance: HintLabelAppearance) {
         hintLabelAppearance = appearance
         defaults.set(appearance.rawValue, forKey: "hints.appearance")
-        onHintLabelStyleChange?(CGFloat(hintLabelSize), appearance)
+        notifyHintStyleChange()
+    }
+
+    func setHintLabelCustomColor(_ color: HintColorComponents) {
+        hintLabelCustomColor = color
+        defaults.set(color.red, forKey: "hints.customColor.red")
+        defaults.set(color.green, forKey: "hints.customColor.green")
+        defaults.set(color.blue, forKey: "hints.customColor.blue")
+        notifyHintStyleChange()
+    }
+
+    func resetHintLabelCustomColor() {
+        setHintLabelCustomColor(.defaultCustom)
+    }
+
+    private func notifyHintStyleChange() {
+        onHintLabelStyleChange?(
+            CGFloat(hintLabelSize),
+            hintLabelAppearance,
+            hintLabelCustomColor
+        )
     }
 
     func beginShortcutRecording() {
@@ -276,12 +319,32 @@ struct SettingsView: View {
                     }
                 }
 
+
+                if model.hintLabelAppearance == .custom {
+                    LabeledContent("Custom color") {
+                        ColorPicker(
+                            "",
+                            selection: Binding(
+                                get: { Color(model.hintLabelCustomColor.nsColor) },
+                                set: { color in
+                                    guard let components = HintColorComponents(nsColor: NSColor(color)) else { return }
+                                    model.setHintLabelCustomColor(components)
+                                }
+                            ),
+                            supportsOpacity: false
+                        )
+                        .labelsHidden()
+                        Button("Reset") { model.resetHintLabelCustomColor() }
+                    }
+                }
+
                 HStack {
                     Text("Preview")
                     Spacer()
                     HintLabelPreview(
                         size: model.hintLabelSize,
-                        appearance: model.hintLabelAppearance
+                        appearance: model.hintLabelAppearance,
+                        customColor: model.hintLabelCustomColor
                     )
                 }
             }
@@ -294,7 +357,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 480, height: 500)
+        .frame(width: 500, height: 520)
         .onAppear { model.refresh() }
     }
 
@@ -319,6 +382,7 @@ struct SettingsView: View {
 private struct HintLabelPreview: View {
     let size: Double
     let appearance: HintLabelAppearance
+    let customColor: HintColorComponents
 
     var body: some View {
         Text("AS")
@@ -338,6 +402,7 @@ private struct HintLabelPreview: View {
         case .classic: .black
         case .glass, .accent: .white
         case .white: .black
+        case .custom: customColor.usesLightForeground ? .white : .black
         }
     }
 
@@ -347,6 +412,7 @@ private struct HintLabelPreview: View {
         case .glass: .black.opacity(0.76)
         case .accent: .accentColor
         case .white: .white.opacity(0.96)
+        case .custom: Color(customColor.nsColor)
         }
     }
 
@@ -355,6 +421,18 @@ private struct HintLabelPreview: View {
         case .classic: .black.opacity(0.35)
         case .glass, .accent: .white.opacity(0.28)
         case .white: .black.opacity(0.22)
+        case .custom: customColor.usesLightForeground ? .white.opacity(0.35) : .black.opacity(0.3)
         }
+    }
+}
+
+private extension HintColorComponents {
+    init?(nsColor: NSColor) {
+        guard let color = nsColor.usingColorSpace(.sRGB) else { return nil }
+        self.init(red: color.redComponent, green: color.greenComponent, blue: color.blueComponent)
+    }
+
+    var nsColor: NSColor {
+        NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
     }
 }

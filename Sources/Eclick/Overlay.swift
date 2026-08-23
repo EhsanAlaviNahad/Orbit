@@ -11,9 +11,13 @@ enum HintInput {
     case enter
     case optionEnter
     case shiftEnter
+    case scroll(ScrollDirection)
     case nextResult
     case previousResult
     case keyReleased
+    case terminalKeyCancelled
+    case modifierChanged
+    case inputInterrupted
     case escape
 }
 
@@ -25,11 +29,13 @@ final class HintInputMonitor {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var pendingTerminalKeyCode: UInt16?
+    private var terminalModifierCycle = TerminalModifierCycle()
     private var isActive = false
     private var suppressCancelShortcutUntil: ContinuousClock.Instant?
 
     func start() -> Bool {
         pendingTerminalKeyCode = nil
+        terminalModifierCycle.reset()
         suppressCancelShortcutUntil = .now.advanced(by: .milliseconds(200))
         if let eventTap, CFMachPortIsValid(eventTap) {
             isActive = true
@@ -39,6 +45,7 @@ final class HintInputMonitor {
         shutdown()
         let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
             | (CGEventMask(1) << CGEventType.keyUp.rawValue)
+            | (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
         let context = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -54,6 +61,8 @@ final class HintInputMonitor {
                     return Unmanaged.passUnretained(event)
                 }
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    monitor.cancelPendingTerminalKey()
+                    monitor.onInput?(.inputInterrupted)
                     monitor.reenable()
                     return Unmanaged.passUnretained(event)
                 }
@@ -61,6 +70,10 @@ final class HintInputMonitor {
                     return monitor.handleKeyUp(event)
                         ? Unmanaged.passUnretained(event)
                         : nil
+                }
+                if type == .flagsChanged {
+                    monitor.handleFlagsChanged(event)
+                    return Unmanaged.passUnretained(event)
                 }
                 guard type == .keyDown else { return Unmanaged.passUnretained(event) }
                 return monitor.handle(event)
@@ -86,6 +99,7 @@ final class HintInputMonitor {
             CGEvent.tapEnable(tap: eventTap, enable: false)
         }
         pendingTerminalKeyCode = nil
+        terminalModifierCycle.reset()
     }
 
     func shutdown() {
@@ -112,6 +126,10 @@ final class HintInputMonitor {
             onInput?(.escape)
             return nil
         }
+        if let direction = OverlayShortcutPolicy.scrollDirection(keyCode: keyCode, flags: flags) {
+            onInput?(.scroll(direction))
+            return nil
+        }
         if flags.contains(.maskCommand), !flags.contains(.maskControl), !flags.contains(.maskAlternate) {
             switch keyCode {
             case 0:
@@ -126,6 +144,10 @@ final class HintInputMonitor {
             return nil
         }
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+            if keyCode == 36 || keyCode == 76 {
+                onInput?(.terminalKeyCancelled)
+                return nil
+            }
             NSSound.beep()
             return nil
         }
@@ -136,13 +158,22 @@ final class HintInputMonitor {
         case 51:
             onInput?(.backspace)
         case 36, 76:
+            guard pendingTerminalKeyCode == nil,
+                  event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else {
+                return nil
+            }
             pendingTerminalKeyCode = keyCode
+            _ = terminalModifierCycle.begin(modifiers: terminalModifiers(in: flags).rawValue)
             if flags.contains(.maskShift) {
                 onInput?(.shiftEnter)
             } else if flags.contains(.maskAlternate) {
                 onInput?(.optionEnter)
-            } else {
+            } else if SystemCommandInputPolicy.isPlainEnter(
+                modifiers: terminalModifiers(in: flags).rawValue
+            ) {
                 onInput?(.enter)
+            } else {
+                onInput?(.terminalKeyCancelled)
             }
         case 48:
             onInput?(flags.contains(.maskShift) ? .previousResult : .nextResult)
@@ -162,14 +193,46 @@ final class HintInputMonitor {
 
     private func handleKeyUp(_ event: CGEvent) -> Bool {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        if let pendingTerminalKeyCode, keyCode == pendingTerminalKeyCode {
+            self.pendingTerminalKeyCode = nil
+            if terminalModifierCycle.finish(
+                modifiers: terminalModifiers(in: event.flags).rawValue
+            ) {
+                onInput?(.keyReleased)
+            } else {
+                onInput?(.terminalKeyCancelled)
+            }
+            return false
+        }
         if UInt32(keyCode) == cancelShortcut.keyCode {
             suppressCancelShortcutUntil = nil
             return true
         }
-        guard keyCode == pendingTerminalKeyCode else { return false }
-        pendingTerminalKeyCode = nil
-        onInput?(.keyReleased)
         return false
+    }
+
+    private func handleFlagsChanged(_ event: CGEvent) {
+        if pendingTerminalKeyCode != nil {
+            terminalModifierCycle.observe(modifiers: terminalModifiers(in: event.flags).rawValue)
+        }
+        onInput?(.modifierChanged)
+    }
+
+    private func cancelPendingTerminalKey() {
+        guard pendingTerminalKeyCode != nil else { return }
+        pendingTerminalKeyCode = nil
+        terminalModifierCycle.reset()
+        onInput?(.terminalKeyCancelled)
+    }
+
+    private func terminalModifiers(in flags: CGEventFlags) -> CGEventFlags {
+        flags.intersection([
+            .maskCommand,
+            .maskControl,
+            .maskAlternate,
+            .maskShift,
+            .maskSecondaryFn
+        ])
     }
 
     private func printableText(from event: CGEvent) -> String? {
@@ -218,95 +281,191 @@ final class HintInputMonitor {
 
 }
 
+private struct OverlayScreenConfiguration {
+    let screenFrame: CGRect
+    let quartzScreenFrame: CGRect
+    let assignments: [HintAssignment]
+    var showsSearchHUD: Bool
+}
+
 @MainActor
 final class HintOverlayController {
     private var panels: [NSPanel] = []
     private var overlayViews: [HintOverlayView] = []
     private var allAssignments: [HintAssignment] = []
+    private var assignmentsByID: [UUID: HintAssignment] = [:]
     private var rankedTargets: [ClickTarget] = []
     private var selectedIndex = 0
     private var querySelectionIsAll = false
     private var transition = 0
     private var hintFontSize: CGFloat = 13
     private var hintAppearance: HintLabelAppearance = .classic
+    private var hintCustomColor: HintColorComponents = .defaultCustom
+    private var pendingSystemCommand: SystemCommand?
 
     private(set) var assignments: [HintAssignment] = []
     private(set) var query = ""
     private(set) var isPresented = false
 
     func show(assignments: [HintAssignment], windowFrame: CGRect) {
-        if !panels.isEmpty,
-           allAssignments.map(\.id) == assignments.map(\.id) {
-            allAssignments = assignments
-            self.assignments = assignments.filter { $0.target.windowArrangement == nil }
-            query = ""
-            rankedTargets = []
-            selectedIndex = 0
-            querySelectionIsAll = false
-            refreshViews()
-            presentPanels()
+        guard !assignments.isEmpty else {
+            dismiss()
             return
         }
-        dismiss()
-        guard !assignments.isEmpty else { return }
+        let mainScreenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let configurations = screenConfigurations(
+            assignments: assignments,
+            windowFrame: windowFrame,
+            mainScreenHeight: mainScreenHeight
+        )
+        guard !configurations.isEmpty else {
+            dismiss()
+            return
+        }
+
+        let canReusePanels = panels.count == configurations.count
+            && overlayViews.count == configurations.count
+            && zip(panels, configurations).allSatisfy { panel, configuration in
+                panel.frame == configuration.screenFrame
+            }
+        if !canReusePanels {
+            dismiss()
+        }
 
         allAssignments = assignments
+        assignmentsByID = Dictionary(uniqueKeysWithValues: assignments.map { ($0.id, $0) })
         self.assignments = assignments.filter { $0.target.windowArrangement == nil }
-        let mainScreenHeight = NSScreen.screens.first?.frame.height ?? 0
-        var hudAssigned = false
+        query = ""
+        rankedTargets = []
+        selectedIndex = 0
+        querySelectionIsAll = false
+        pendingSystemCommand = nil
 
-        for screen in NSScreen.screens {
+        if canReusePanels {
+            for (view, configuration) in zip(overlayViews, configurations) {
+                configure(
+                    view,
+                    with: configuration,
+                    mainScreenHeight: mainScreenHeight
+                )
+            }
+        } else {
+            for configuration in configurations {
+                let view = HintOverlayView(
+                    frame: CGRect(origin: .zero, size: configuration.screenFrame.size)
+                )
+                configure(view, with: configuration, mainScreenHeight: mainScreenHeight)
+
+                let panel = NSPanel(
+                    contentRect: configuration.screenFrame,
+                    styleMask: [.borderless, .nonactivatingPanel],
+                    backing: .buffered,
+                    defer: false
+                )
+                panel.backgroundColor = NSColor.clear
+                panel.isOpaque = false
+                panel.hasShadow = false
+                panel.ignoresMouseEvents = true
+                panel.level = NSWindow.Level.statusBar
+                panel.collectionBehavior = NSWindow.CollectionBehavior([
+                    .canJoinAllSpaces,
+                    .fullScreenAuxiliary,
+                    .ignoresCycle
+                ])
+                panel.contentView = view
+                panel.alphaValue = 0
+                overlayViews.append(view)
+                panels.append(panel)
+            }
+        }
+
+        refreshViews()
+        presentPanels()
+    }
+
+    func showOnlyDockHints() {
+        guard isPresented else { return }
+        rankedTargets = []
+        selectedIndex = 0
+        assignments = allAssignments.filter { $0.target.source == .dock }
+        refreshViews()
+    }
+
+    func replaceAssignments(_ newAssignments: [HintAssignment], windowFrame: CGRect) {
+        guard isPresented, !newAssignments.isEmpty else { return }
+        let mainScreenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let configurations = screenConfigurations(
+            assignments: newAssignments,
+            windowFrame: windowFrame,
+            mainScreenHeight: mainScreenHeight
+        )
+        let canReusePanels = panels.count == configurations.count
+            && overlayViews.count == configurations.count
+            && zip(panels, configurations).allSatisfy { panel, configuration in
+                panel.frame == configuration.screenFrame
+            }
+        guard canReusePanels else {
+            show(assignments: newAssignments, windowFrame: windowFrame)
+            return
+        }
+
+        allAssignments = newAssignments
+        assignmentsByID = Dictionary(uniqueKeysWithValues: newAssignments.map { ($0.id, $0) })
+        for (view, configuration) in zip(overlayViews, configurations) {
+            configure(view, with: configuration, mainScreenHeight: mainScreenHeight)
+        }
+        selectedIndex = 0
+        refreshSearch()
+    }
+
+    private func screenConfigurations(
+        assignments: [HintAssignment],
+        windowFrame: CGRect,
+        mainScreenHeight: CGFloat
+    ) -> [OverlayScreenConfiguration] {
+        var configurations = NSScreen.screens.compactMap { screen -> OverlayScreenConfiguration? in
             let quartzScreenFrame = CGRect(
                 x: screen.frame.minX,
                 y: mainScreenHeight - screen.frame.maxY,
                 width: screen.frame.width,
                 height: screen.frame.height
             )
-            guard quartzScreenFrame.intersects(windowFrame) else { continue }
             let screenAssignments = assignments.filter {
                 quartzScreenFrame.contains($0.target.clickPoint)
             }
-            guard !screenAssignments.isEmpty else { continue }
-
-            let view = HintOverlayView(frame: CGRect(origin: .zero, size: screen.frame.size))
-            view.assignments = screenAssignments.filter { $0.target.windowArrangement == nil }
-            view.desktopOrigin = screen.frame.origin
-            view.mainScreenHeight = mainScreenHeight
-            view.quartzScreenFrame = quartzScreenFrame
-            view.hintFontSize = hintFontSize
-            view.hintAppearance = hintAppearance
-            if !hudAssigned, quartzScreenFrame.contains(CGPoint(x: windowFrame.midX, y: windowFrame.midY)) {
-                view.showsSearchHUD = true
-                hudAssigned = true
-            }
-
-            let panel = NSPanel(
-                contentRect: screen.frame,
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
+            guard !screenAssignments.isEmpty else { return nil }
+            return OverlayScreenConfiguration(
+                screenFrame: screen.frame,
+                quartzScreenFrame: quartzScreenFrame,
+                assignments: screenAssignments,
+                showsSearchHUD: false
             )
-            panel.backgroundColor = NSColor.clear
-            panel.isOpaque = false
-            panel.hasShadow = false
-            panel.ignoresMouseEvents = true
-            panel.level = NSWindow.Level.statusBar
-            panel.collectionBehavior = NSWindow.CollectionBehavior([
-                .canJoinAllSpaces,
-                .fullScreenAuxiliary,
-                .ignoresCycle
-            ])
-            panel.contentView = view
-            panel.alphaValue = 0
-            overlayViews.append(view)
-            panels.append(panel)
         }
+        let windowCenter = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
+        let hudIndex = configurations.firstIndex {
+            $0.quartzScreenFrame.contains(windowCenter)
+        } ?? configurations.indices.first
+        if let hudIndex {
+            configurations[hudIndex].showsSearchHUD = true
+        }
+        return configurations
+    }
 
-        if !hudAssigned {
-            overlayViews.first?.showsSearchHUD = true
-        }
-        refreshViews()
-        presentPanels()
+    private func configure(
+        _ view: HintOverlayView,
+        with configuration: OverlayScreenConfiguration,
+        mainScreenHeight: CGFloat
+    ) {
+        view.updateAssignments(
+            configuration.assignments.filter { $0.target.windowArrangement == nil }
+        )
+        view.desktopOrigin = configuration.screenFrame.origin
+        view.mainScreenHeight = mainScreenHeight
+        view.quartzScreenFrame = configuration.quartzScreenFrame
+        view.hintFontSize = hintFontSize
+        view.hintAppearance = hintAppearance
+        view.hintCustomColor = hintCustomColor
+        view.showsSearchHUD = configuration.showsSearchHUD
     }
 
     func appendSearchText(_ text: String) {
@@ -316,13 +475,25 @@ final class HintOverlayController {
         refreshSearch()
     }
 
-    func updateHintStyle(fontSize: CGFloat, appearance: HintLabelAppearance) {
+    func updateHintStyle(
+        fontSize: CGFloat,
+        appearance: HintLabelAppearance,
+        customColor: HintColorComponents
+    ) {
         hintFontSize = min(20, max(10, fontSize))
         hintAppearance = appearance
+        hintCustomColor = customColor
         for view in overlayViews {
             view.hintFontSize = hintFontSize
             view.hintAppearance = hintAppearance
+            view.hintCustomColor = hintCustomColor
         }
+    }
+
+    func setPendingSystemCommand(_ command: SystemCommand?) {
+        guard pendingSystemCommand != command else { return }
+        pendingSystemCommand = command
+        refreshViews()
     }
 
     func backspace() {
@@ -398,9 +569,11 @@ final class HintOverlayController {
         panels = []
         overlayViews = []
         allAssignments = []
+        assignmentsByID = [:]
         rankedTargets = []
         assignments = []
         query = ""
+        pendingSystemCommand = nil
         querySelectionIsAll = false
         selectedIndex = 0
     }
@@ -410,6 +583,7 @@ final class HintOverlayController {
         transition += 1
         isPresented = false
         query = ""
+        pendingSystemCommand = nil
         rankedTargets = []
         assignments = allAssignments.filter { $0.target.windowArrangement == nil }
         selectedIndex = 0
@@ -434,10 +608,12 @@ final class HintOverlayController {
         if query.isEmpty {
             rankedTargets = []
             assignments = allAssignments.filter { $0.target.windowArrangement == nil }
+        } else if SystemCommandParser.parse(query) != nil {
+            rankedTargets = []
+            assignments = []
         } else {
             let matches = TargetSearch.matches(query: query, assignments: allAssignments)
             rankedTargets = matches.map(\.target)
-            let assignmentsByID = Dictionary(uniqueKeysWithValues: allAssignments.map { ($0.id, $0) })
             assignments = rankedTargets.compactMap { assignmentsByID[$0.id] }
         }
         refreshViews()
@@ -448,43 +624,63 @@ final class HintOverlayController {
             ? rankedTargets[selectedIndex]
             : nil
         let selectedID = selectedTarget?.id
+        let systemCommand = SystemCommandParser.parse(query)
+        let hudState = SearchHUDState(
+            query: query,
+            selectionIsAll: querySelectionIsAll,
+            selectedLabel: selectedTarget?.label,
+            selectedIsWindowCommand: selectedTarget?.windowArrangement != nil,
+            matchCount: rankedTargets.count,
+            systemCommand: systemCommand,
+            pendingSystemCommand: pendingSystemCommand == systemCommand ? pendingSystemCommand : nil
+        )
         for view in overlayViews {
-            view.assignments = assignments.filter {
+            let visibleAssignments = assignments.filter {
                 $0.target.windowArrangement == nil
                     && view.quartzScreenFrame.contains($0.target.clickPoint)
             }
-            view.query = query
-            view.querySelectionIsAll = querySelectionIsAll
-            view.selectedTargetID = selectedID
-            view.selectedTargetLabel = selectedTarget?.label
-            view.selectedTargetIsCommand = selectedTarget?.windowArrangement != nil
-            view.matchCount = rankedTargets.count
+            view.update(
+                assignments: visibleAssignments,
+                selectedTargetID: selectedID,
+                hudState: hudState
+            )
         }
     }
 }
 
+private struct SearchHUDState: Equatable {
+    var query: String
+    var selectionIsAll: Bool
+    var selectedLabel: String?
+    var selectedIsWindowCommand: Bool
+    var matchCount: Int
+    var systemCommand: SystemCommand?
+    var pendingSystemCommand: SystemCommand?
+
+    static let empty = SearchHUDState(
+        query: "",
+        selectionIsAll: false,
+        selectedLabel: nil,
+        selectedIsWindowCommand: false,
+        matchCount: 0,
+        systemCommand: nil,
+        pendingSystemCommand: nil
+    )
+}
+
+private struct AssignmentRenderKey: Equatable {
+    let id: UUID
+    let code: String
+    let frame: CGRect
+}
+
 private final class HintOverlayView: NSView {
-    var assignments: [HintAssignment] = [] { didSet { needsDisplay = true } }
-    var query = "" {
-        didSet {
-            searchHUD.query = query
-            needsDisplay = true
-        }
-    }
-    var selectedTargetID: UUID? { didSet { needsDisplay = true } }
-    var selectedTargetLabel: String? { didSet { searchHUD.selectedLabel = selectedTargetLabel } }
-    var selectedTargetIsCommand = false {
-        didSet { searchHUD.selectedIsCommand = selectedTargetIsCommand }
-    }
-    var matchCount = 0 {
-        didSet {
-            searchHUD.matchCount = matchCount
-            needsDisplay = true
-        }
-    }
-    var querySelectionIsAll = false { didSet { searchHUD.selectionIsAll = querySelectionIsAll } }
+    private(set) var assignments: [HintAssignment] = []
+    private var assignmentRenderKeys: [AssignmentRenderKey] = []
+    private var selectedTargetID: UUID?
     var showsSearchHUD = false {
         didSet {
+            guard oldValue != showsSearchHUD else { return }
             searchHUD.isHidden = !showsSearchHUD
             needsLayout = true
         }
@@ -492,8 +688,15 @@ private final class HintOverlayView: NSView {
     var desktopOrigin = CGPoint.zero
     var mainScreenHeight: CGFloat = 0
     var quartzScreenFrame = CGRect.zero
-    var hintFontSize: CGFloat = 13 { didSet { needsDisplay = true } }
-    var hintAppearance: HintLabelAppearance = .classic { didSet { needsDisplay = true } }
+    var hintFontSize: CGFloat = 13 {
+        didSet { if oldValue != hintFontSize { needsDisplay = true } }
+    }
+    var hintAppearance: HintLabelAppearance = .classic {
+        didSet { if oldValue != hintAppearance { needsDisplay = true } }
+    }
+    var hintCustomColor: HintColorComponents = .defaultCustom {
+        didSet { if oldValue != hintCustomColor { needsDisplay = true } }
+    }
     private let searchHUD = SearchHUDView()
 
     override init(frame frameRect: NSRect) {
@@ -504,6 +707,29 @@ private final class HintOverlayView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func updateAssignments(_ assignments: [HintAssignment]) {
+        let renderKeys = assignments.map {
+            AssignmentRenderKey(id: $0.id, code: $0.code, frame: $0.target.frame)
+        }
+        guard renderKeys != assignmentRenderKeys else { return }
+        self.assignments = assignments
+        assignmentRenderKeys = renderKeys
+        needsDisplay = true
+    }
+
+    func update(
+        assignments: [HintAssignment],
+        selectedTargetID: UUID?,
+        hudState: SearchHUDState
+    ) {
+        updateAssignments(assignments)
+        if self.selectedTargetID != selectedTargetID {
+            self.selectedTargetID = selectedTargetID
+            needsDisplay = true
+        }
+        searchHUD.state = hudState
     }
 
     override var isFlipped: Bool { false }
@@ -626,6 +852,18 @@ private final class HintOverlayView: NSView {
                 .black,
                 NSColor.black.withAlphaComponent(0.22)
             )
+        case .custom:
+            let foreground: NSColor = hintCustomColor.usesLightForeground ? .white : .black
+            return (
+                NSColor(
+                    srgbRed: hintCustomColor.red,
+                    green: hintCustomColor.green,
+                    blue: hintCustomColor.blue,
+                    alpha: 0.98
+                ),
+                foreground,
+                foreground.withAlphaComponent(0.3)
+            )
         }
     }
 
@@ -646,11 +884,12 @@ private final class SearchHUDView: NSGlassEffectView {
     private let detailLabel = NSTextField(labelWithString: "")
     private let content = NSView()
 
-    var query = "" { didSet { refresh() } }
-    var matchCount = 0 { didSet { refresh() } }
-    var selectionIsAll = false { didSet { refresh() } }
-    var selectedLabel: String? { didSet { refresh() } }
-    var selectedIsCommand = false { didSet { refresh() } }
+    var state = SearchHUDState.empty {
+        didSet {
+            guard oldValue != state else { return }
+            refresh()
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -753,7 +992,20 @@ private final class SearchHUDView: NSGlassEffectView {
     }
 
     private func refresh() {
-        if query.isEmpty {
+        if let command = state.systemCommand {
+            icon.image = NSImage(
+                systemSymbolName: command.symbolName,
+                accessibilityDescription: command.displayName
+            )
+            icon.contentTintColor = state.pendingSystemCommand == command
+                ? .systemOrange
+                : .secondaryLabelColor
+        } else {
+            icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
+            icon.contentTintColor = .secondaryLabelColor
+        }
+
+        if state.query.isEmpty {
             searchLabel.attributedStringValue = NSAttributedString(
                 string: "Search",
                 attributes: [
@@ -761,11 +1013,11 @@ private final class SearchHUDView: NSGlassEffectView {
                     .foregroundColor: NSColor.tertiaryLabelColor
                 ]
             )
-            detailLabel.stringValue = "Type an element or window command"
+            detailLabel.stringValue = "Type an element, window command, or system command"
         } else {
-            if selectionIsAll {
+            if state.selectionIsAll {
                 searchLabel.attributedStringValue = NSAttributedString(
-                    string: query,
+                    string: state.query,
                     attributes: [
                         .font: NSFont.systemFont(ofSize: 21, weight: .medium),
                         .foregroundColor: NSColor.white,
@@ -774,21 +1026,27 @@ private final class SearchHUDView: NSGlassEffectView {
                 )
             } else {
                 searchLabel.attributedStringValue = NSAttributedString(
-                    string: query,
+                    string: state.query,
                     attributes: [
                         .font: NSFont.systemFont(ofSize: 21, weight: .medium),
                         .foregroundColor: NSColor.labelColor
                     ]
                 )
             }
-            if matchCount == 0 {
+            if let command = state.systemCommand {
+                if state.pendingSystemCommand == command {
+                    detailLabel.stringValue = command.confirmationPrompt
+                } else {
+                    detailLabel.stringValue = "\(command.displayName)  •  Return: confirm  •  Esc to close"
+                }
+            } else if state.matchCount == 0 {
                 detailLabel.stringValue = "No results  •  Delete to edit  •  Esc to close"
-            } else if selectedIsCommand, let selectedLabel {
+            } else if state.selectedIsWindowCommand, let selectedLabel = state.selectedLabel {
                 detailLabel.stringValue = "\(selectedLabel)  •  Return: run command  •  Tab/↑/↓: choose"
-            } else if let selectedLabel {
+            } else if let selectedLabel = state.selectedLabel {
                 detailLabel.stringValue = "\(selectedLabel)  •  Return: click  •  Tab/↑/↓: choose"
             } else {
-                detailLabel.stringValue = "\(matchCount) result\(matchCount == 1 ? "" : "s")"
+                detailLabel.stringValue = "\(state.matchCount) result\(state.matchCount == 1 ? "" : "s")"
             }
         }
         needsLayout = true

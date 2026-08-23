@@ -5,7 +5,222 @@ import Foundation
 enum CoreSelfTests {
     private static var failures: [String] = []
 
-    static func main() {
+    @MainActor
+    static func main() async {
+        let acceptedSystemCommands: [(String, SystemCommand)] = [
+            ("restart", .restart),
+            ("Restart", .restart),
+            ("RESTART", .restart),
+            (" restart ", .restart),
+            ("shutdown", .shutdown),
+            ("Shutdown", .shutdown),
+            ("sleep", .sleep),
+            ("Sleep", .sleep)
+        ]
+        for (query, command) in acceptedSystemCommands {
+            check(SystemCommandParser.parse(query) == command, "system command exact parse: \(query)")
+        }
+        for query in [
+            "rest", "restart now", "restart button", "shut", "shutdown menu",
+            "slee", "sleeping", ""
+        ] {
+            check(SystemCommandParser.parse(query) == nil, "system command exact rejection: \(query)")
+        }
+
+        var confirmation = SystemCommandConfirmationStateMachine()
+        check(
+            confirmation.enterKeyDown(query: "restart"),
+            "first system Enter-down is intercepted"
+        )
+        check(confirmation.pendingCommand == nil, "confirmation waits for first Enter-up")
+        check(
+            confirmation.enterKeyDown(query: "restart", isAutoRepeat: true),
+            "system Enter auto-repeat is intercepted"
+        )
+        check(
+            confirmation.enterKeyUp() == .confirmationRequested(.restart),
+            "first complete Enter requests confirmation"
+        )
+        check(confirmation.pendingCommand == .restart, "restart confirmation becomes pending")
+        confirmation.queryDidChange(to: "Restart")
+        check(confirmation.pendingCommand == nil, "raw query casing change cancels confirmation")
+        check(confirmation.enterKeyUp() == nil, "cancelled confirmation cannot execute on key-up")
+
+        var modifierChangedConfirmation = SystemCommandConfirmationStateMachine()
+        _ = modifierChangedConfirmation.enterKeyDown(query: "restart")
+        check(
+            modifierChangedConfirmation.enterKeyUp(isValid: false) == nil,
+            "modifier change cancels terminal key cycle"
+        )
+        check(
+            modifierChangedConfirmation.pendingCommand == nil,
+            "modifier change cannot leave confirmation pending"
+        )
+
+        var transientModifierCycle = TerminalModifierCycle()
+        check(transientModifierCycle.begin(modifiers: 0), "terminal modifier cycle begins")
+        transientModifierCycle.observe(modifiers: 1)
+        transientModifierCycle.observe(modifiers: 0)
+        check(
+            !transientModifierCycle.finish(modifiers: 0),
+            "transient modifier round trip invalidates terminal cycle"
+        )
+        var stableModifierCycle = TerminalModifierCycle()
+        _ = stableModifierCycle.begin(modifiers: 2)
+        stableModifierCycle.observe(modifiers: 2)
+        check(stableModifierCycle.finish(modifiers: 2), "stable terminal modifier cycle remains valid")
+        check(SystemCommandInputPolicy.isPlainEnter(modifiers: 0), "unmodified Enter is plain")
+        check(!SystemCommandInputPolicy.isPlainEnter(modifiers: 1), "Fn-modified Enter is not plain")
+
+        var interCycleModifierConfirmation = SystemCommandConfirmationStateMachine()
+        _ = interCycleModifierConfirmation.enterKeyDown(query: "shutdown")
+        _ = interCycleModifierConfirmation.enterKeyUp()
+        interCycleModifierConfirmation.modifierDidChange()
+        _ = interCycleModifierConfirmation.enterKeyDown(query: "shutdown")
+        check(
+            interCycleModifierConfirmation.enterKeyUp() == .confirmationRequested(.shutdown),
+            "inter-cycle modifier change requires fresh first Enter"
+        )
+
+        var interruptedConfirmation = SystemCommandConfirmationStateMachine()
+        _ = interruptedConfirmation.enterKeyDown(query: "sleep")
+        _ = interruptedConfirmation.enterKeyUp()
+        interruptedConfirmation.inputWasInterrupted()
+        _ = interruptedConfirmation.enterKeyDown(query: "sleep")
+        check(
+            interruptedConfirmation.enterKeyUp() == .confirmationRequested(.sleep),
+            "event-tap interruption requires fresh first Enter"
+        )
+
+        let mockExecutor = MockSystemCommandExecutor()
+        let coordinator = SystemCommandCoordinator(executor: mockExecutor)
+        check(coordinator.enterKeyDown(query: " shutdown "), "shutdown first Enter-down")
+        check(
+            coordinator.enterKeyUp() == .confirmationRequested(.shutdown),
+            "shutdown first Enter-up confirms"
+        )
+        let commandsAfterFirstEnter = await mockExecutor.commands()
+        check(commandsAfterFirstEnter.isEmpty, "first Enter never calls executor")
+        check(coordinator.enterKeyDown(query: " shutdown "), "shutdown second Enter-down")
+        let commandsAfterSecondKeyDown = await mockExecutor.commands()
+        check(commandsAfterSecondKeyDown.isEmpty, "second Enter-down never calls executor")
+        let shutdownOutcome = coordinator.enterKeyUp()
+        check(shutdownOutcome == .execute(.shutdown), "second Enter-up arms exact execution")
+        if case let .execute(command) = shutdownOutcome {
+            do {
+                try await coordinator.execute(command)
+            } catch {
+                check(false, "mock executor unexpectedly failed")
+            }
+        }
+        let executedCommands = await mockExecutor.commands()
+        check(executedCommands == [.shutdown], "mock executor called exactly once")
+        check(coordinator.pendingCommand == nil, "state resets before executor returns")
+
+        let failingExecutor = MockSystemCommandExecutor(shouldFail: true)
+        let failingCoordinator = SystemCommandCoordinator(executor: failingExecutor)
+        _ = failingCoordinator.enterKeyDown(query: "sleep")
+        _ = failingCoordinator.enterKeyUp()
+        _ = failingCoordinator.enterKeyDown(query: "sleep")
+        if case let .execute(command) = failingCoordinator.enterKeyUp() {
+            do {
+                try await failingCoordinator.execute(command)
+                check(false, "executor failure reaches caller")
+            } catch {
+                check(true, "executor failure handled without system action")
+            }
+        } else {
+            check(false, "sleep second Enter-up produces execution")
+        }
+        check(failingCoordinator.pendingCommand == nil, "executor failure leaves state reset")
+        _ = failingCoordinator.enterKeyDown(query: "sleep")
+        check(
+            failingCoordinator.enterKeyUp() == .confirmationRequested(.sleep),
+            "failure cannot bypass next confirmation"
+        )
+        failingCoordinator.cancel()
+        check(failingCoordinator.pendingCommand == nil, "Escape/close/reopen cancellation resets state")
+
+        check(
+            OverlayShortcutPolicy.scrollDirection(keyCode: 126, flags: .maskControl) == .up,
+            "Control-Up scrolls up"
+        )
+        check(
+            OverlayShortcutPolicy.scrollDirection(keyCode: 125, flags: .maskControl) == .down,
+            "Control-Down scrolls down"
+        )
+        check(
+            OverlayShortcutPolicy.scrollDirection(keyCode: 125, flags: []) == nil,
+            "plain Down remains result navigation"
+        )
+        check(
+            OverlayShortcutPolicy.scrollDirection(
+                keyCode: 125,
+                flags: [.maskControl, .maskCommand]
+            ) == nil,
+            "extra Command modifier rejects scroll shortcut"
+        )
+        let scrollLocation = CGPoint(x: 320, y: 240)
+        let scrollDownEvent = PageScroller.makeEvent(.down, at: scrollLocation)
+        check(
+            scrollDownEvent?.type == .scrollWheel,
+            "scroll-down sends a wheel event"
+        )
+        check(
+            scrollDownEvent?.getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == -36,
+            "scroll-down uses a gentle negative pixel delta"
+        )
+        check(
+            PageScroller.makeEvent(.up, at: scrollLocation)?
+                .getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == 36,
+            "scroll-up uses a gentle positive pixel delta"
+        )
+        check(
+            scrollDownEvent?.location == scrollLocation,
+            "wheel event targets the active window center"
+        )
+        check(HintColorComponents(red: 0.2, green: 0.3, blue: 0.4) != nil, "valid custom color accepted")
+        check(HintColorComponents(red: .nan, green: 0.3, blue: 0.4) == nil, "invalid custom color rejected")
+        check(HintColorComponents(red: 1.2, green: 0.3, blue: 0.4) == nil, "out-of-range custom color rejected")
+        check(HintColorComponents(red: 0, green: 0, blue: 0)?.usesLightForeground == true, "dark custom color uses white text")
+        check(HintColorComponents(red: 1, green: 1, blue: 1)?.usesLightForeground == false, "light custom color uses black text")
+
+        check(
+            ActivationActionPolicy.preferredAction(from: ["AXShowMenu"]) == nil,
+            "context-menu action is never used for normal click"
+        )
+        check(
+            ActivationActionPolicy.preferredAction(from: ["AXShowMenu", "AXPress"]) == "AXPress",
+            "normal press wins over context-menu action"
+        )
+        check(
+            DockTargetPolicy.isEligible(
+                role: "AXDockItem",
+                subrole: "AXApplicationDockItem",
+                actions: ["AXPress", "AXShowMenu"],
+                frame: CGRect(x: 20, y: 20, width: 48, height: 48)
+            ),
+            "pressable application Dock item is eligible"
+        )
+        check(
+            !DockTargetPolicy.isEligible(
+                role: "AXDockItem",
+                subrole: "AXSeparatorDockItem",
+                actions: ["AXPress"],
+                frame: CGRect(x: 20, y: 20, width: 8, height: 48)
+            ),
+            "Dock separator is rejected"
+        )
+        check(
+            !DockTargetPolicy.isEligible(
+                role: "AXDockItem",
+                subrole: "AXApplicationDockItem",
+                actions: ["AXShowMenu"],
+                frame: CGRect(x: 20, y: 20, width: 48, height: 48)
+            ),
+            "Dock item without normal press is rejected"
+        )
+
         check(HintGenerator.codes(count: 0).isEmpty, "zero hints")
         check(HintGenerator.codes(count: 9) == ["A", "S", "D", "F", "G", "H", "J", "K", "L"], "home-row alphabet")
         check(HintGenerator.codes(count: 10).allSatisfy { $0.count == 2 }, "two-key boundary")
@@ -331,5 +546,27 @@ enum CoreSelfTests {
             label: label,
             source: source
         )
+    }
+}
+
+private enum MockSystemCommandError: Error {
+    case requestedFailure
+}
+
+private actor MockSystemCommandExecutor: SystemCommandExecuting {
+    private var recordedCommands: [SystemCommand] = []
+    private let shouldFail: Bool
+
+    init(shouldFail: Bool = false) {
+        self.shouldFail = shouldFail
+    }
+
+    func execute(_ command: SystemCommand) async throws {
+        recordedCommands.append(command)
+        if shouldFail { throw MockSystemCommandError.requestedFailure }
+    }
+
+    func commands() -> [SystemCommand] {
+        recordedCommands
     }
 }

@@ -4,12 +4,14 @@ import Foundation
 
 enum TargetSource: String, Codable, CaseIterable {
     case accessibility
+    case dock
     case ocr
     case command
 
     fileprivate var mergePriority: Int {
         switch self {
         case .accessibility: 1
+        case .dock: 3
         case .ocr: 0
         case .command: 2
         }
@@ -50,9 +52,6 @@ struct ClickTarget: Identifiable, @unchecked Sendable {
         CGPoint(x: frame.midX, y: frame.midY)
     }
 
-    var searchTerms: [String] {
-        [label] + searchAliases
-    }
 }
 
 struct KeyboardShortcut: Codable, Hashable {
@@ -72,6 +71,85 @@ struct KeyboardShortcut: Codable, Hashable {
         carbonModifiers: 1 << 8,
         displayName: "⌘E"
     )
+}
+
+enum ScrollDirection: Equatable, Sendable {
+    case up
+    case down
+}
+
+struct HintColorComponents: Equatable, Sendable {
+    let red: Double
+    let green: Double
+    let blue: Double
+
+    static let defaultCustom = HintColorComponents(red: 0.29, green: 0.46, blue: 0.95)!
+
+    init?(red: Double, green: Double, blue: Double) {
+        let values = [red, green, blue]
+        guard values.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return nil }
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+
+    var usesLightForeground: Bool {
+        relativeLuminance < 0.179
+    }
+
+    private var relativeLuminance: Double {
+        func linearized(_ component: Double) -> Double {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linearized(red)
+            + 0.7152 * linearized(green)
+            + 0.0722 * linearized(blue)
+    }
+}
+
+enum OverlayShortcutPolicy {
+    static func scrollDirection(keyCode: UInt16, flags: CGEventFlags) -> ScrollDirection? {
+        guard flags.contains(.maskControl) else { return nil }
+        let incompatible: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift]
+        guard flags.intersection(incompatible).isEmpty else { return nil }
+        return switch keyCode {
+        case 126: .up
+        case 125: .down
+        default: nil
+        }
+    }
+}
+
+enum ActivationActionPolicy {
+    static let preferredActions = [
+        kAXPressAction as String,
+        kAXConfirmAction as String,
+        "AXPick",
+        "AXOpen"
+    ]
+
+    static let supportedActions = Set(preferredActions)
+
+    static func preferredAction(from actions: [String]) -> String? {
+        preferredActions.first(where: actions.contains)
+    }
+}
+
+enum DockTargetPolicy {
+    static func isEligible(
+        role: String,
+        subrole: String,
+        actions: [String],
+        frame: CGRect
+    ) -> Bool {
+        (role == "AXDockItem" || subrole.hasSuffix("DockItem"))
+            && subrole != "AXSeparatorDockItem"
+            && actions.contains(kAXPressAction as String)
+            && frame.width >= 8
+            && frame.height >= 8
+    }
 }
 
 enum WindowArrangement: Int, CaseIterable, Sendable {
@@ -250,16 +328,7 @@ enum TargetSearch {
         let rankedMatches: [(match: SearchMatch, spatialIndex: Int)] = TargetGeometry.sortedTopLeft(targets)
             .enumerated().compactMap { entry -> (match: SearchMatch, spatialIndex: Int)? in
             let (spatialIndex, target) = entry
-            let relevance = target.searchTerms.compactMap { term -> (rank: MatchRank, score: Int)? in
-                let normalizedTerm = normalize(term)
-                guard !normalizedTerm.isEmpty else { return nil }
-                return relevance(query: normalizedQuery, label: normalizedTerm)
-            }.min { lhs, rhs in
-                if lhs.rank.rawValue != rhs.rank.rawValue {
-                    return lhs.rank.rawValue < rhs.rank.rawValue
-                }
-                return lhs.score < rhs.score
-            }
+            let relevance = bestRelevance(query: normalizedQuery, target: target)
             guard let relevance else { return nil }
 
             return (
@@ -348,6 +417,31 @@ enum TargetSearch {
             return (.fuzzySubsequence, score)
         }
         return nil
+    }
+
+    private static func bestRelevance(
+        query: String,
+        target: ClickTarget
+    ) -> (rank: MatchRank, score: Int)? {
+        var best: (rank: MatchRank, score: Int)?
+        func consider(_ term: String) {
+            let normalizedTerm = normalize(term)
+            guard !normalizedTerm.isEmpty,
+                  let candidate = relevance(query: query, label: normalizedTerm) else {
+                return
+            }
+            if let current = best,
+               current.rank.rawValue < candidate.rank.rawValue
+                    || (current.rank == candidate.rank && current.score <= candidate.score) {
+                return
+            }
+            best = candidate
+        }
+        consider(target.label)
+        for alias in target.searchAliases {
+            consider(alias)
+        }
+        return best
     }
 
     private static func fuzzyScore(query: String, label: String) -> Int? {

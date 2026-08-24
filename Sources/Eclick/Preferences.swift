@@ -36,7 +36,6 @@ final class PreferencesModel: ObservableObject {
     @Published private(set) var hintLabelSize: Double
     @Published private(set) var hintLabelAppearance: HintLabelAppearance
     @Published private(set) var hintLabelCustomColor: HintColorComponents
-    @Published private(set) var keepAwakePreferred = false
 
     var onShortcutChange: ((KeyboardShortcut) throws -> Void)?
     var onHintLabelStyleChange: ((CGFloat, HintLabelAppearance, HintColorComponents) -> Void)?
@@ -74,7 +73,6 @@ final class PreferencesModel: ObservableObject {
                 fallback: HintColorComponents.defaultCustom.blue
             )
         ) ?? .defaultCustom
-        keepAwakePreferred = defaults.bool(forKey: "keepAwake.enabled")
         if defaults.object(forKey: "shortcut.keyCode") != nil {
             shortcut = KeyboardShortcut(
                 keyCode: UInt32(defaults.integer(forKey: "shortcut.keyCode")),
@@ -121,11 +119,6 @@ final class PreferencesModel: ObservableObject {
             message = error.localizedDescription
         }
         refresh()
-    }
-
-    func setKeepAwakePreferred(_ enabled: Bool) {
-        keepAwakePreferred = enabled
-        defaults.set(enabled, forKey: "keepAwake.enabled")
     }
 
     func setHintLabelSize(_ size: Double) {        hintLabelSize = min(20, max(10, size))

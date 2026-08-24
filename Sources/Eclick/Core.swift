@@ -18,6 +18,60 @@ enum TargetSource: String, Codable, CaseIterable {
     }
 }
 
+/// Facts about a previously completed overlay session, used to decide whether
+/// its scan output can be repainted instantly on the next activation.
+struct ScanSnapshotRecord {
+    let pid: pid_t
+    let windowFrame: CGRect
+    let endedReadOnly: Bool
+    let capturedAt: ContinuousClock.Instant
+}
+
+enum ScanRecencyPolicy {
+    static let maximumInstantPaintAge: Duration = .milliseconds(800)
+    static let maximumWarmTreeAge: Duration = .milliseconds(1_000)
+
+    /// Strict instant-paint eligibility: same app, identical current window
+    /// frame, session closed without any activation, and still fresh.
+    static func canInstantlyPresent(
+        record: ScanSnapshotRecord?,
+        pid: pid_t,
+        currentFrame: CGRect?,
+        now: ContinuousClock.Instant
+    ) -> Bool {
+        guard let record else { return false }
+        guard record.pid == pid else { return false }
+        guard record.endedReadOnly else { return false }
+        guard let currentFrame,
+              TargetGeometry.isUsable(currentFrame),
+              record.windowFrame == currentFrame else {
+            return false
+        }
+        return isFresh(record.capturedAt, until: maximumInstantPaintAge, now: now)
+    }
+
+    /// A same-window scan within the last second leaves the accessibility
+    /// tree warm; the second breadth-first warm-retry pass can be skipped.
+    static func treeRecentlyWarmed(
+        pid: pid_t,
+        frame: CGRect,
+        lastScan: ScanSnapshotRecord?,
+        now: ContinuousClock.Instant
+    ) -> Bool {
+        guard let lastScan else { return false }
+        guard lastScan.pid == pid, lastScan.windowFrame == frame else { return false }
+        return isFresh(lastScan.capturedAt, until: maximumWarmTreeAge, now: now)
+    }
+
+    private static func isFresh(
+        _ capturedAt: ContinuousClock.Instant,
+        until maximumAge: Duration,
+        now: ContinuousClock.Instant
+    ) -> Bool {
+        capturedAt.duration(to: now) <= maximumAge
+    }
+}
+
 struct ClickTarget: Identifiable, @unchecked Sendable {
     let id: UUID
     var frame: CGRect
@@ -347,6 +401,90 @@ enum TargetSearch {
         }.map(\.match)
     }
 
+    /// Precomputes the normalized search terms (label first, then aliases) for
+    /// each target so per-keystroke searches skip repeated Unicode folding.
+    static func searchIndex(for targets: [ClickTarget]) -> [UUID: [String]] {
+        var index: [UUID: [String]] = Dictionary(minimumCapacity: targets.count)
+        for target in targets {
+            var terms: [String] = []
+            terms.reserveCapacity(1 + target.searchAliases.count)
+            appendNormalized(target.label, to: &terms)
+            for alias in target.searchAliases {
+                appendNormalized(alias, to: &terms)
+            }
+            index[target.id] = terms
+        }
+        return index
+    }
+
+    /// Same ranking as `matches(query:assignments:)` but reads precomputed
+    /// terms from `searchIndex` instead of re-normalizing on every keystroke,
+    /// and skips the redundant spatial re-sort of the target list.
+    static func matches(
+        query: String,
+        assignments: [HintAssignment],
+        searchIndex: [UUID: [String]]
+    ) -> [SearchMatch] {
+        let normalizedQuery = normalize(query)
+        let labelMatches: [UUID: SearchMatch]
+        if normalizedQuery.isEmpty {
+            labelMatches = [:]
+        } else {
+            var matchesByID: [UUID: SearchMatch] = Dictionary(
+                minimumCapacity: assignments.count
+            )
+            for assignment in assignments {
+                let id = assignment.target.id
+                guard matchesByID[id] == nil else { continue }
+                guard let relevance = bestRelevance(
+                    query: normalizedQuery,
+                    terms: searchIndex[id] ?? []
+                ) else { continue }
+                matchesByID[id] = SearchMatch(
+                    target: assignment.target,
+                    rank: relevance.rank.rawValue,
+                    score: relevance.score
+                )
+            }
+            labelMatches = matchesByID
+        }
+
+        let hintQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let canMatchHint = HintGenerator.isValidInput(hintQuery)
+
+        return assignments.enumerated().compactMap { index, assignment -> (SearchMatch, Int)? in
+            if canMatchHint, assignment.code == hintQuery {
+                return (SearchMatch(target: assignment.target, rank: -2, score: 0), index)
+            }
+            if canMatchHint, assignment.code.hasPrefix(hintQuery) {
+                return (
+                    SearchMatch(
+                        target: assignment.target,
+                        rank: -1,
+                        score: assignment.code.count - hintQuery.count
+                    ),
+                    index
+                )
+            }
+            guard let match = labelMatches[assignment.target.id] else { return nil }
+            return (match, index)
+        }.sorted { lhs, rhs in
+            if lhs.0.rank != rhs.0.rank { return lhs.0.rank < rhs.0.rank }
+            if lhs.0.score != rhs.0.score { return lhs.0.score < rhs.0.score }
+            if (lhs.0.target.windowArrangement != nil)
+                != (rhs.0.target.windowArrangement != nil) {
+                return lhs.0.target.windowArrangement != nil
+            }
+            return lhs.1 < rhs.1
+        }.map(\.0)
+    }
+
+    private static func appendNormalized(_ term: String, to terms: inout [String]) {
+        let normalizedTerm = normalize(term)
+        guard !normalizedTerm.isEmpty else { return }
+        terms.append(normalizedTerm)
+    }
+
     static func matches(query: String, assignments: [HintAssignment]) -> [SearchMatch] {
         let labelMatches = Dictionary(
             uniqueKeysWithValues: matches(
@@ -423,23 +561,30 @@ enum TargetSearch {
         query: String,
         target: ClickTarget
     ) -> (rank: MatchRank, score: Int)? {
+        var terms: [String] = []
+        terms.reserveCapacity(1 + target.searchAliases.count)
+        appendNormalized(target.label, to: &terms)
+        for alias in target.searchAliases {
+            appendNormalized(alias, to: &terms)
+        }
+        return bestRelevance(query: query, terms: terms)
+    }
+
+    private static func bestRelevance(
+        query: String,
+        terms: [String]
+    ) -> (rank: MatchRank, score: Int)? {
         var best: (rank: MatchRank, score: Int)?
-        func consider(_ term: String) {
-            let normalizedTerm = normalize(term)
-            guard !normalizedTerm.isEmpty,
-                  let candidate = relevance(query: query, label: normalizedTerm) else {
-                return
+        for term in terms where !term.isEmpty {
+            guard let candidate = relevance(query: query, label: term) else {
+                continue
             }
             if let current = best,
                current.rank.rawValue < candidate.rank.rawValue
                     || (current.rank == candidate.rank && current.score <= candidate.score) {
-                return
+                continue
             }
             best = candidate
-        }
-        consider(target.label)
-        for alias in target.searchAliases {
-            consider(alias)
         }
         return best
     }

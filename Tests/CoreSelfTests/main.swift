@@ -521,6 +521,196 @@ enum CoreSelfTests {
             "display selection handles no screens"
         )
 
+        // The indexed search path must produce identical output to the
+        // per-call normalization path for arbitrary targets and queries.
+        var lcgState: UInt64 = 0x9E3779B97F4A7C15
+        func nextRandom(_ bound: Int) -> Int {
+            lcgState = lcgState &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((lcgState >> 33) % UInt64(bound))
+        }
+        let vocabulary = [
+            "Settings", "Account Overview", "École", "Zoë's Café",
+            "Re: Launch Agent", "file / save", "hello   world", "MiXeD CaSe",
+            "Über-uns", "naïve tab", "  padded  ", "Control", "日本語ボタン",
+            "e-mail settings", "Backup & Sync", "Don't Stop", "42nd street"
+        ]
+        var corpusTargets: [ClickTarget] = []
+        for index in 0..<160 {
+            let label = vocabulary[nextRandom(vocabulary.count)]
+            var aliases: [String] = []
+            for _ in 0..<nextRandom(3) {
+                aliases.append(vocabulary[nextRandom(vocabulary.count)])
+            }
+            if nextRandom(4) == 0 { aliases.append("alias-\(index)") }
+            corpusTargets.append(ClickTarget(
+                frame: CGRect(
+                    x: CGFloat(nextRandom(1_000)),
+                    y: CGFloat(nextRandom(800)),
+                    width: 30,
+                    height: 20
+                ),
+                label: label,
+                source: .accessibility,
+                searchAliases: aliases
+            ))
+        }
+        let corpusQueries = [
+            "settings", "SET", "eco", "cafe", "zoe", "launch", "save", "world",
+            "mixed", "uber", "naive", "padded", "control", "backup", "stop",
+            "street", "alias-7", "alias-", "stg", "sttings", "x", "", "---",
+            "é c o", "42", "dont"
+        ]
+        for query in corpusQueries {
+            let legacyTargets = TargetSearch.matches(query: query, targets: corpusTargets)
+            let index = TargetSearch.searchIndex(for: corpusTargets)
+            let legacyAssignments = HintGenerator.assign(to: corpusTargets)
+            let legacyUnified = TargetSearch.matches(
+                query: query,
+                assignments: legacyAssignments
+            )
+            let indexedUnified = TargetSearch.matches(
+                query: query,
+                assignments: legacyAssignments,
+                searchIndex: index
+            )
+            struct MatchSignature: Equatable {
+                let id: UUID
+                let rank: Int
+                let score: Int
+            }
+            func signature(_ matches: [SearchMatch]) -> [MatchSignature] {
+                matches.map { MatchSignature(id: $0.target.id, rank: $0.rank, score: $0.score) }
+            }
+            check(
+                signature(indexedUnified) == signature(legacyUnified),
+                "indexed search parity for query '\(query)'"
+            )
+            // With the hint layer neutralized (no valid prefix), the indexed
+            // assignment search must equal the plain target search. Assignments
+            // are built through HintGenerator.assign so both sides share the
+            // same spatial ordering used in production.
+            let bareAssignments = HintGenerator.assign(to: corpusTargets).map {
+                HintAssignment(target: $0.target, code: "")
+            }
+            let indexedBare = TargetSearch.matches(
+                query: query,
+                assignments: bareAssignments,
+                searchIndex: index
+            )
+            check(
+                signature(indexedBare) == signature(legacyTargets),
+                "indexed bare-search parity for query '\(query)'"
+            )
+        }
+
+        // Scan recency policy gates instant repaint and warm-tree skipping.
+        let baseInstant = ContinuousClock.Instant.now
+        let windowFrame = CGRect(x: 10, y: 20, width: 800, height: 600)
+        func record(
+            pid: pid_t = 42,
+            frame: CGRect = windowFrame,
+            readOnly: Bool = true,
+            age: Duration = .zero,
+            from now: ContinuousClock.Instant
+        ) -> ScanSnapshotRecord {
+            ScanSnapshotRecord(
+                pid: pid,
+                windowFrame: frame,
+                endedReadOnly: readOnly,
+                capturedAt: now.advanced(by: age * -1)
+            )
+        }
+        check(
+            ScanRecencyPolicy.canInstantlyPresent(
+                record: record(from: baseInstant),
+                pid: 42,
+                currentFrame: windowFrame,
+                now: baseInstant
+            ),
+            "fresh read-only same-window snapshot may repaint instantly"
+        )
+        check(
+            !ScanRecencyPolicy.canInstantlyPresent(
+                record: record(readOnly: false, from: baseInstant),
+                pid: 42,
+                currentFrame: windowFrame,
+                now: baseInstant
+            ),
+            "snapshot from activating session never repaints instantly"
+        )
+        check(
+            !ScanRecencyPolicy.canInstantlyPresent(
+                record: record(pid: 43, from: baseInstant),
+                pid: 42,
+                currentFrame: windowFrame,
+                now: baseInstant
+            ),
+            "snapshot from another process never repaints instantly"
+        )
+        check(
+            !ScanRecencyPolicy.canInstantlyPresent(
+                record: record(frame: CGRect(x: 0, y: 0, width: 5, height: 5), from: baseInstant),
+                pid: 42,
+                currentFrame: windowFrame,
+                now: baseInstant
+            ),
+            "changed window frame invalidates instant repaint"
+        )
+        check(
+            !ScanRecencyPolicy.canInstantlyPresent(
+                record: record(from: baseInstant),
+                pid: 42,
+                currentFrame: nil,
+                now: baseInstant
+            ),
+            "missing probed frame blocks instant repaint"
+        )
+        check(
+            !ScanRecencyPolicy.canInstantlyPresent(
+                record: record(age: .milliseconds(801), from: baseInstant),
+                pid: 42,
+                currentFrame: windowFrame,
+                now: baseInstant
+            ),
+            "stale snapshot refuses instant repaint"
+        )
+        check(
+            ScanRecencyPolicy.canInstantlyPresent(
+                record: record(age: .milliseconds(800), from: baseInstant),
+                pid: 42,
+                currentFrame: windowFrame,
+                now: baseInstant
+            ),
+            "snapshot exactly at age limit still repaints instantly"
+        )
+        check(
+            ScanRecencyPolicy.treeRecentlyWarmed(
+                pid: 42,
+                frame: windowFrame,
+                lastScan: record(age: .milliseconds(999), from: baseInstant),
+                now: baseInstant
+            ),
+            "recent same-window scan leaves tree warm"
+        )
+        check(
+            !ScanRecencyPolicy.treeRecentlyWarmed(
+                pid: 42,
+                frame: windowFrame,
+                lastScan: record(age: .milliseconds(1_001), from: baseInstant),
+                now: baseInstant
+            ),
+            "expired scan no longer leaves tree warm"
+        )
+        check(
+            !ScanRecencyPolicy.treeRecentlyWarmed(
+                pid: 42,
+                frame: CGRect(x: 1, y: 1, width: 9, height: 9),
+                lastScan: record(from: baseInstant),
+                now: baseInstant
+            ),
+            "moved window does not reuse warm tree"
+        )
+
         if failures.isEmpty {
             print("Core self-tests passed")
         } else {

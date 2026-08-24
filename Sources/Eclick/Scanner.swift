@@ -23,6 +23,22 @@ struct ScanResult {
     let isComplete: Bool
 }
 
+/// Two-stage focused-window scan. The accessibility stage resolves first and
+/// is safe to present immediately; the merged stage folds in OCR targets once
+/// the speculatively captured screenshot has been recognized.
+struct FocusedWindowScan {
+    let windowFrame: CGRect
+    let accessibilityTargets: [ClickTarget]
+    let accessibilityIsComplete: Bool
+    /// Resolves to the full merged target list (accessibility + OCR). Always
+    /// await through a cancellation handler that cancels this task.
+    let mergedTargetsTask: Task<[ClickTarget], Never>
+
+    func cancelSupplement() {
+        mergedTargetsTask.cancel()
+    }
+}
+
 final class TargetScanner: Sendable {
     private static let ocrFallbackTargetThreshold = 48
 
@@ -56,7 +72,7 @@ final class TargetScanner: Sendable {
         case breadthFirst
     }
 
-    func scanFocusedWindow(pid: pid_t) async throws -> ScanResult {
+    func beginFocusedWindowScan(pid: pid_t) async throws -> FocusedWindowScan {
         guard PermissionCenter.accessibilityGranted else {
             throw ScanError.accessibilityUnavailable
         }
@@ -75,33 +91,54 @@ final class TargetScanner: Sendable {
         try Task.checkCancellation()
 
         let accessibilityTask = Task.detached(priority: .userInitiated) {
-            Self.resilientAccessibilityTargets(in: context)
+            Self.resilientAccessibilityTargets(
+                in: context,
+                skipWarmRetry: Self.recentlyWarmedTree(pid: pid, frame: context.frame)
+            )
+        }
+        // The screenshot pipeline (shareable-content lookup, window matching,
+        // capture) is slow and does not depend on accessibility results, so it
+        // overlaps the AX traversal instead of running after it.
+        let captureTask = Task.detached(priority: .userInitiated) { () -> CapturedWindow? in
+            guard PermissionCenter.screenRecordingGranted else { return nil }
+            return await Self.captureFocusedWindowImage(in: context)
         }
         return try await withTaskCancellationHandler {
             let accessibilityScan = await accessibilityTask.value
+            Self.recordAccessibilityScanCompletion(pid: context.pid, frame: context.frame)
             try Task.checkCancellation()
-            let ocrTargets: [ClickTarget]
-            if PermissionCenter.screenRecordingGranted
-                && (!accessibilityScan.isComplete
-                    || accessibilityScan.targets.count < Self.ocrFallbackTargetThreshold) {
-                ocrTargets = (try? await Self.ocrTargets(
-                    in: context,
-                    accurate: !accessibilityScan.isComplete
-                )) ?? []
-            } else {
-                ocrTargets = []
-            }
-            try Task.checkCancellation()
-            return ScanResult(
-                windowFrame: context.frame,
-                targets: TargetGeometry.merge(
+            let mergedTargetsTask = Task.detached(priority: .userInitiated) { () -> [ClickTarget] in
+                let ocrEligible = PermissionCenter.screenRecordingGranted
+                    && (!accessibilityScan.isComplete
+                        || accessibilityScan.targets.count < Self.ocrFallbackTargetThreshold)
+                let ocrTargets: [ClickTarget]
+                if ocrEligible {
+                    ocrTargets = await Self.recognizeOCRTargets(
+                        captureTask: captureTask,
+                        in: context,
+                        accurate: accessibilityScan.targets.isEmpty
+                    )
+                } else {
+                    captureTask.cancel()
+                    ocrTargets = []
+                }
+                if Task.isCancelled {
+                    return accessibilityScan.targets
+                }
+                return TargetGeometry.merge(
                     accessibility: accessibilityScan.targets,
                     ocr: ocrTargets
-                ),
-                isComplete: accessibilityScan.isComplete
+                )
+            }
+            return FocusedWindowScan(
+                windowFrame: context.frame,
+                accessibilityTargets: accessibilityScan.targets,
+                accessibilityIsComplete: accessibilityScan.isComplete,
+                mergedTargetsTask: mergedTargetsTask
             )
         } onCancel: {
             accessibilityTask.cancel()
+            captureTask.cancel()
         }
     }
 
@@ -120,6 +157,57 @@ final class TargetScanner: Sendable {
         } onCancel: {
             task.cancel()
         }
+    }
+
+    /// Lightweight focused-window frame probe used to validate a cached
+    /// overlay snapshot without running a full scan.
+    func probeFocusedWindowFrame(pid: pid_t) async -> CGRect? {
+        let task = Task.detached(priority: .userInitiated) {
+            Self.quickFocusedWindowFrame(pid: pid)
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private static func quickFocusedWindowFrame(pid: pid_t) -> CGRect? {
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.15)
+        let window: AXUIElement? =
+            attribute(kAXFocusedWindowAttribute, from: appElement)
+            ?? attribute(kAXMainWindowAttribute, from: appElement)
+        guard let window else { return nil }
+        AXUIElementSetMessagingTimeout(window, 0.15)
+        return elementFrame(window)
+    }
+
+    private static let recencyStateLock = NSLock()
+    private nonisolated(unsafe) static var recentAccessibilityScanByPID:
+        [pid_t: ScanSnapshotRecord] = [:]
+
+    private static func recordAccessibilityScanCompletion(pid: pid_t, frame: CGRect) {
+        recencyStateLock.lock()
+        defer { recencyStateLock.unlock() }
+        recentAccessibilityScanByPID[pid] = ScanSnapshotRecord(
+            pid: pid,
+            windowFrame: frame,
+            endedReadOnly: false,
+            capturedAt: .now
+        )
+    }
+
+    private static func recentlyWarmedTree(pid: pid_t, frame: CGRect) -> Bool {
+        recencyStateLock.lock()
+        let lastScan = recentAccessibilityScanByPID[pid]
+        recencyStateLock.unlock()
+        return ScanRecencyPolicy.treeRecentlyWarmed(
+            pid: pid,
+            frame: frame,
+            lastScan: lastScan,
+            now: .now
+        )
     }
 
     private static func dockTargets(pid: pid_t) -> [ClickTarget] {
@@ -226,17 +314,20 @@ final class TargetScanner: Sendable {
         return manualStatus == .success
     }
 
-    private static func resilientAccessibilityTargets(in context: WindowContext) -> AccessibilityScan {
+    private static func resilientAccessibilityTargets(
+        in context: WindowContext,
+        skipWarmRetry: Bool
+    ) -> AccessibilityScan {
         let first = accessibilityTargets(in: context, order: .depthFirst)
         guard !Task.isCancelled else { return first }
-        guard context.needsWarmRetry || !first.isComplete || first.targets.count < 12 else {
+        guard !skipWarmRetry,
+              context.needsWarmRetry || !first.isComplete || first.targets.count < 12 else {
             return first
         }
 
         // Electron, Safari, and Finder can expose a cold or lazy tree on the
         // first request. A differently ordered second pass both warms the tree
         // and covers branches the first time budget may not have reached.
-        usleep(75_000)
         let second = accessibilityTargets(in: context, order: .breadthFirst)
         return AccessibilityScan(
             targets: TargetGeometry.deduplicated(first.targets + second.targets),
@@ -483,15 +574,23 @@ final class TargetScanner: Sendable {
         kAXSizeAttribute as String
     ] + snapshotLabelKeys + [kAXValueAttribute as String]
 
-    private static func ocrTargets(
-        in context: WindowContext,
-        accurate: Bool
-    ) async throws -> [ClickTarget] {
-        try Task.checkCancellation()
-        let content = try await SCShareableContent.excludingDesktopWindows(
+    private struct CapturedWindow {
+        let image: CGImage
+        let frame: CGRect
+    }
+
+    /// Slow capture half of OCR: shareable-content lookup, window matching,
+    /// and the screenshot itself. No Vision work happens here.
+    private static func captureFocusedWindowImage(
+        in context: WindowContext
+    ) async -> CapturedWindow? {
+        guard !Task.isCancelled else { return nil }
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(
             false,
             onScreenWindowsOnly: true
-        )
+        ) else {
+            return nil
+        }
         let candidates = content.windows.filter { $0.owningApplication?.processID == context.pid }
         let exactWindow = context.windowNumber.flatMap { number in
             candidates.first(where: { $0.windowID == number })
@@ -499,7 +598,7 @@ final class TargetScanner: Sendable {
         guard let window = exactWindow ?? candidates.max(by: {
             windowMatchScore($0, context: context) < windowMatchScore($1, context: context)
         }), window.frame.intersects(context.frame) else {
-            return []
+            return nil
         }
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
@@ -511,18 +610,34 @@ final class TargetScanner: Sendable {
         configuration.height = max(1, Int(window.frame.height * captureScale))
         configuration.showsCursor = false
         configuration.ignoreShadowsSingleWindow = true
-        let image = try await SCScreenshotManager.captureImage(
+        guard let image = try? await SCScreenshotManager.captureImage(
             contentFilter: filter,
             configuration: configuration
-        )
-        try Task.checkCancellation()
+        ) else { return nil }
+        return CapturedWindow(image: image, frame: window.frame)
+    }
+
+    /// Fast recognition half of OCR: awaits the speculatively captured image,
+    /// then runs Vision text recognition over it.
+    private static func recognizeOCRTargets(
+        captureTask: Task<CapturedWindow?, Never>,
+        in context: WindowContext,
+        accurate: Bool
+    ) async -> [ClickTarget] {
+        let capture = await captureTask.value
+        guard !Task.isCancelled, let capture else { return [] }
+        let windowFrame = capture.frame
 
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = accurate ? .accurate : .fast
         request.usesLanguageCorrection = accurate
-        let handler = VNImageRequestHandler(cgImage: image, orientation: .up)
-        try handler.perform([request])
-        try Task.checkCancellation()
+        let handler = VNImageRequestHandler(cgImage: capture.image, orientation: .up)
+        do {
+            try handler.perform([request])
+        } catch {
+            return []
+        }
+        guard !Task.isCancelled else { return [] }
 
         return (request.results ?? [])
             .sorted(by: { $0.confidence > $1.confidence })
@@ -534,10 +649,10 @@ final class TargetScanner: Sendable {
             }
             let box = observation.boundingBox
             let frame = CGRect(
-                x: window.frame.minX + box.minX * window.frame.width,
-                y: window.frame.minY + (1 - box.maxY) * window.frame.height,
-                width: box.width * window.frame.width,
-                height: box.height * window.frame.height
+                x: windowFrame.minX + box.minX * windowFrame.width,
+                y: windowFrame.minY + (1 - box.maxY) * windowFrame.height,
+                width: box.width * windowFrame.width,
+                height: box.height * windowFrame.height
             ).intersection(context.frame)
             guard frame.width >= 8, frame.height >= 6 else { return nil }
             return ClickTarget(

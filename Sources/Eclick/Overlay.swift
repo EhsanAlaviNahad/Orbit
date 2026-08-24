@@ -294,6 +294,7 @@ final class HintOverlayController {
     private var overlayViews: [HintOverlayView] = []
     private var allAssignments: [HintAssignment] = []
     private var assignmentsByID: [UUID: HintAssignment] = [:]
+    private var searchIndex: [UUID: [String]] = [:]
     private var rankedTargets: [ClickTarget] = []
     private var selectedIndex = 0
     private var querySelectionIsAll = false
@@ -334,6 +335,7 @@ final class HintOverlayController {
 
         allAssignments = assignments
         assignmentsByID = Dictionary(uniqueKeysWithValues: assignments.map { ($0.id, $0) })
+        searchIndex = TargetSearch.searchIndex(for: allAssignments.map(\.target))
         self.assignments = assignments.filter { $0.target.windowArrangement == nil }
         query = ""
         rankedTargets = []
@@ -411,6 +413,7 @@ final class HintOverlayController {
 
         allAssignments = newAssignments
         assignmentsByID = Dictionary(uniqueKeysWithValues: newAssignments.map { ($0.id, $0) })
+        searchIndex = TargetSearch.searchIndex(for: allAssignments.map(\.target))
         for (view, configuration) in zip(overlayViews, configurations) {
             configure(view, with: configuration, mainScreenHeight: mainScreenHeight)
         }
@@ -570,6 +573,7 @@ final class HintOverlayController {
         overlayViews = []
         allAssignments = []
         assignmentsByID = [:]
+        searchIndex = [:]
         rankedTargets = []
         assignments = []
         query = ""
@@ -612,7 +616,11 @@ final class HintOverlayController {
             rankedTargets = []
             assignments = []
         } else {
-            let matches = TargetSearch.matches(query: query, assignments: allAssignments)
+            let matches = TargetSearch.matches(
+                query: query,
+                assignments: allAssignments,
+                searchIndex: searchIndex
+            )
             rankedTargets = matches.map(\.target)
             assignments = rankedTargets.compactMap { assignmentsByID[$0.id] }
         }
@@ -689,15 +697,31 @@ private final class HintOverlayView: NSView {
     var mainScreenHeight: CGFloat = 0
     var quartzScreenFrame = CGRect.zero
     var hintFontSize: CGFloat = 13 {
-        didSet { if oldValue != hintFontSize { needsDisplay = true } }
+        didSet {
+            guard oldValue != hintFontSize else { return }
+            invalidateStyleCaches()
+            needsDisplay = true
+        }
     }
     var hintAppearance: HintLabelAppearance = .classic {
-        didSet { if oldValue != hintAppearance { needsDisplay = true } }
+        didSet {
+            guard oldValue != hintAppearance else { return }
+            invalidateStyleCaches()
+            needsDisplay = true
+        }
     }
     var hintCustomColor: HintColorComponents = .defaultCustom {
-        didSet { if oldValue != hintCustomColor { needsDisplay = true } }
+        didSet {
+            guard oldValue != hintCustomColor else { return }
+            invalidateStyleCaches()
+            needsDisplay = true
+        }
     }
     private let searchHUD = SearchHUDView()
+    private var cachedHintFont: NSFont?
+    private var labelTextSizeCache: [String: CGSize] = [:]
+    private var cachedUnselectedColors: (fill: NSColor, foreground: NSColor, border: NSColor)?
+    private var cachedSelectedColors: (fill: NSColor, foreground: NSColor, border: NSColor)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -755,8 +779,14 @@ private final class HintOverlayView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        let font = hintFont()
+        let unselected = unselectedColors()
+        let normalAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: unselected.foreground
+        ]
         for assignment in assignments {
-            draw(assignment)
+            draw(assignment, font: font, normalAttributes: normalAttributes)
         }
     }
 
@@ -770,7 +800,32 @@ private final class HintOverlayView: NSView {
         searchHUD.animateOut()
     }
 
-    private func draw(_ assignment: HintAssignment) {
+    private func invalidateStyleCaches() {
+        cachedHintFont = nil
+        labelTextSizeCache.removeAll()
+        cachedUnselectedColors = nil
+        cachedSelectedColors = nil
+    }
+
+    private func hintFont() -> NSFont {
+        if let cachedHintFont { return cachedHintFont }
+        let font = NSFont.monospacedSystemFont(ofSize: hintFontSize, weight: .bold)
+        cachedHintFont = font
+        return font
+    }
+
+    private func textSize(for code: String, font: NSFont) -> CGSize {
+        if let cached = labelTextSizeCache[code] { return cached }
+        let size = (code as NSString).size(withAttributes: [.font: font])
+        labelTextSizeCache[code] = size
+        return size
+    }
+
+    private func draw(
+        _ assignment: HintAssignment,
+        font: NSFont,
+        normalAttributes: [NSAttributedString.Key: Any]
+    ) {
         let targetFrame = localFrame(for: assignment.target.frame)
         let selected = assignment.target.id == selectedTargetID
         if selected {
@@ -783,13 +838,15 @@ private final class HintOverlayView: NSView {
             outline.stroke()
         }
 
-        let colors = hintColors(selected: selected)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: hintFontSize, weight: .bold),
-            .foregroundColor: colors.foreground
-        ]
+        let colors = selected ? selectedColors() : unselectedColors()
+        let attributes = selected
+            ? [
+                NSAttributedString.Key.font: font,
+                NSAttributedString.Key.foregroundColor: colors.foreground
+            ]
+            : normalAttributes
         let text = assignment.code as NSString
-        let textSize = text.size(withAttributes: attributes)
+        let textSize = textSize(for: assignment.code, font: font)
         let horizontalPadding = max(10, hintFontSize * 0.76)
         let verticalPadding = max(5, hintFontSize * 0.38)
         let labelSize = CGSize(
@@ -819,42 +876,48 @@ private final class HintOverlayView: NSView {
         )
     }
 
-    private func hintColors(selected: Bool) -> (fill: NSColor, foreground: NSColor, border: NSColor) {
-        if selected {
-            return (
-                NSColor.controlAccentColor.withAlphaComponent(0.98),
-                .white,
-                NSColor.white.withAlphaComponent(0.35)
-            )
-        }
+    private func selectedColors() -> (fill: NSColor, foreground: NSColor, border: NSColor) {
+        if let cachedSelectedColors { return cachedSelectedColors }
+        let colors = (
+            fill: NSColor.controlAccentColor.withAlphaComponent(0.98),
+            foreground: NSColor.white,
+            border: NSColor.white.withAlphaComponent(0.35)
+        )
+        cachedSelectedColors = colors
+        return colors
+    }
+
+    private func unselectedColors() -> (fill: NSColor, foreground: NSColor, border: NSColor) {
+        if let cachedUnselectedColors { return cachedUnselectedColors }
+        let colors: (fill: NSColor, foreground: NSColor, border: NSColor)
         switch hintAppearance {
         case .classic:
-            return (
+            colors = (
                 NSColor(calibratedRed: 1.0, green: 0.82, blue: 0.16, alpha: 0.96),
                 .black,
                 NSColor.black.withAlphaComponent(0.35)
             )
         case .glass:
-            return (
+            colors = (
                 NSColor.black.withAlphaComponent(0.76),
                 .white,
                 NSColor.white.withAlphaComponent(0.28)
             )
         case .accent:
-            return (
+            colors = (
                 NSColor.controlAccentColor.withAlphaComponent(0.94),
                 .white,
                 NSColor.white.withAlphaComponent(0.28)
             )
         case .white:
-            return (
+            colors = (
                 NSColor.white.withAlphaComponent(0.96),
                 .black,
                 NSColor.black.withAlphaComponent(0.22)
             )
         case .custom:
             let foreground: NSColor = hintCustomColor.usesLightForeground ? .white : .black
-            return (
+            colors = (
                 NSColor(
                     srgbRed: hintCustomColor.red,
                     green: hintCustomColor.green,
@@ -865,6 +928,8 @@ private final class HintOverlayView: NSView {
                 foreground.withAlphaComponent(0.3)
             )
         }
+        cachedUnselectedColors = colors
+        return colors
     }
 
     private func localFrame(for quartzFrame: CGRect) -> CGRect {

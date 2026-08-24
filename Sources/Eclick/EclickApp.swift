@@ -38,6 +38,12 @@ final class AppController: NSObject {
     private let input = HintInputMonitor()
     private let preferences = PreferencesModel()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let keepAwake = KeepAwakeManager()
+    private let statusMenu = NSMenu()
+    private var keepAwakeMenuItem: NSMenuItem?
+    private var restoreBatterySleepMenuItem: NSMenuItem?
+    private var enableLidPreventionMenuItem: NSMenuItem?
+    private var isScanningStatusBar = false
     private let systemCommands: SystemCommandCoordinator
 
     private var settingsWindow: NSWindow?
@@ -49,11 +55,24 @@ final class AppController: NSObject {
     private var systemCommandID: UUID?
     private var scrollRefreshTask: Task<Void, Never>?
     private var scrollRefreshID: UUID?
+    private var keepAwakeConfigurationTask: Task<Void, Never>?
+    private var isBatteryLidCloseAuthorizationInFlight = false
+    private var requiresBatteryLidCloseSettlement = false
+    private static let lidGrantDeclinedKey = "keepAwake.lidGrantDeclined"
     private var activateMenuItem: NSMenuItem?
     private var lastTargetPID: pid_t?
     private var activeTargetPID: pid_t?
     private var activeWindowFrame: CGRect?
     private var pendingActivation: (target: ClickTarget, kind: TargetActivator.Kind)?
+    private var activatedDuringSession = false
+    private var lastPresentation: (result: ScanResult, dockTargets: [ClickTarget])?
+    private var overlaySessionSnapshot: OverlaySessionSnapshot?
+
+    private struct OverlaySessionSnapshot {
+        let record: ScanSnapshotRecord
+        let result: ScanResult
+        let dockTargets: [ClickTarget]
+    }
 
     init(systemCommandExecutor: any SystemCommandExecuting = NativeSystemCommandExecutor()) {
         systemCommands = SystemCommandCoordinator(executor: systemCommandExecutor)
@@ -95,11 +114,24 @@ final class AppController: NSObject {
            application.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             lastTargetPID = application.processIdentifier
         }
+        // Restore remembered keep-awake state from the previous session.
+        if preferences.keepAwakePreferred {
+            _ = keepAwake.activate()
+            updateStatusIcon()
+        }
+        keepAwake.startPowerSourceMonitoring { [weak self] in
+            self?.refreshBatteryLidClosePrevention()
+        }
+        refreshBatteryLidClosePrevention(staleRevertCheck: true)
     }
 
     func shutdown() {
         cancelHintMode()
         input.shutdown()
+        keepAwake.stopPowerSourceMonitoring()
+        keepAwake.deactivate()
+        keepAwakeConfigurationTask?.cancel()
+        keepAwakeConfigurationTask = nil
         arrangementTask?.cancel()
         arrangementTask = nil
         arrangementID = nil
@@ -201,14 +233,12 @@ final class AppController: NSObject {
 
     private func configureStatusItem() {
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "cursorarrow.click",
-                accessibilityDescription: "Eclick"
-            )
-            button.toolTip = "Eclick — keyboard hints for clickable controls"
+            // Left click toggles keep-awake; right click opens the menu.
+            button.target = self
+            button.action = #selector(statusItemButtonClicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        let menu = NSMenu()
         let activate = NSMenuItem(
             title: "Show Hints (\(preferences.shortcut.displayName))",
             action: #selector(toggleHintModeFromMenu),
@@ -216,8 +246,39 @@ final class AppController: NSObject {
         )
         activate.target = self
         activateMenuItem = activate
-        menu.addItem(activate)
-        menu.addItem(.separator())
+        statusMenu.addItem(activate)
+        statusMenu.addItem(.separator())
+
+        let keepAwakeItem = NSMenuItem(
+            title: "Keep Awake",
+            action: #selector(toggleKeepAwakeFromMenu),
+            keyEquivalent: ""
+        )
+        keepAwakeItem.target = self
+        keepAwakeMenuItem = keepAwakeItem
+        refreshKeepAwakeMenuItem()
+        statusMenu.addItem(keepAwakeItem)
+
+        let restoreBatterySleepItem = NSMenuItem(
+            title: "Restore Default Battery Sleep",
+            action: #selector(restoreDefaultBatterySleepFromMenu),
+            keyEquivalent: ""
+        )
+        restoreBatterySleepItem.target = self
+        restoreBatterySleepItem.isHidden = true
+        restoreBatterySleepMenuItem = restoreBatterySleepItem
+        statusMenu.addItem(restoreBatterySleepItem)
+
+        let enableLidPreventionItem = NSMenuItem(
+            title: "Enable Lid-Closed Awake on Battery…",
+            action: #selector(enableLidPreventionFromMenu),
+            keyEquivalent: ""
+        )
+        enableLidPreventionItem.target = self
+        enableLidPreventionItem.isHidden = true
+        enableLidPreventionMenuItem = enableLidPreventionItem
+        statusMenu.addItem(enableLidPreventionItem)
+        statusMenu.addItem(.separator())
 
         let settings = NSMenuItem(
             title: "Settings…",
@@ -225,7 +286,7 @@ final class AppController: NSObject {
             keyEquivalent: ","
         )
         settings.target = self
-        menu.addItem(settings)
+        statusMenu.addItem(settings)
 
         let about = NSMenuItem(
             title: "About Eclick",
@@ -233,8 +294,8 @@ final class AppController: NSObject {
             keyEquivalent: ""
         )
         about.target = self
-        menu.addItem(about)
-        menu.addItem(.separator())
+        statusMenu.addItem(about)
+        statusMenu.addItem(.separator())
 
         let quitItem = NSMenuItem(
             title: "Quit Eclick",
@@ -242,8 +303,22 @@ final class AppController: NSObject {
             keyEquivalent: "q"
         )
         quitItem.target = self
-        menu.addItem(quitItem)
-        statusItem.menu = menu
+        statusMenu.addItem(quitItem)
+        updateStatusIcon()
+    }
+
+    @objc private func statusItemButtonClicked() {
+        guard let event = NSApp.currentEvent, event.type == .rightMouseUp else {
+            toggleKeepAwake()
+            return
+        }
+        showStatusMenu()
+    }
+
+    private func showStatusMenu() {
+        statusItem.menu = statusMenu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
     }
 
     private func configureShortcut() {
@@ -282,10 +357,8 @@ final class AppController: NSObject {
 
         let id = UUID()
         scanID = id
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "viewfinder",
-            accessibilityDescription: "Eclick is scanning"
-        )
+        isScanningStatusBar = true
+        updateStatusIcon()
         scanTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -295,13 +368,93 @@ final class AppController: NSObject {
                     self.restoreStatusIcon()
                 }
             }
+            var paintedFromCache = false
             do {
                 async let dockTargets = self.scanner.scanDockTargets()
-                let result = try await self.scanner.scanFocusedWindow(pid: targetPID)
-                guard !Task.isCancelled, self.scanID == id else { return }
-                self.present(result, dockTargets: await dockTargets, targetPID: targetPID)
+                // A fresh read-only session snapshot may be validated with a
+                // cheap frame probe while the full scan runs in parallel.
+                let snapshotCandidate = self.overlaySessionSnapshot
+                let cacheProbe: Task<CGRect?, Never>?
+                if let snapshot = snapshotCandidate, snapshot.record.endedReadOnly {
+                    let pidForProbe = targetPID
+                    cacheProbe = Task.detached(priority: .userInitiated) {
+                        await self.scanner.probeFocusedWindowFrame(pid: pidForProbe)
+                    }
+                } else {
+                    cacheProbe = nil
+                }
+                async let scanPromise = self.scanner.beginFocusedWindowScan(pid: targetPID)
+
+                if let cacheProbe {
+                    let probedFrame = await cacheProbe.value
+                    if !Task.isCancelled,
+                       self.scanID == id,
+                       !self.overlay.isPresented,
+                       let snapshot = snapshotCandidate,
+                       let probedFrame,
+                       ScanRecencyPolicy.canInstantlyPresent(
+                        record: snapshot.record,
+                        pid: targetPID,
+                        currentFrame: probedFrame,
+                        now: .now
+                       ) {
+                        self.present(
+                            snapshot.result,
+                            dockTargets: snapshot.dockTargets,
+                            targetPID: targetPID
+                        )
+                        paintedFromCache = self.overlay.isPresented
+                    }
+                }
+
+                // Present accessibility hints as soon as the tree scan lands;
+                // OCR supplements merge in later without blocking first paint.
+                let scan = try await scanPromise
+                guard !Task.isCancelled, self.scanID == id else {
+                    scan.cancelSupplement()
+                    return
+                }
+                let immediate = ScanResult(
+                    windowFrame: scan.windowFrame,
+                    targets: scan.accessibilityTargets,
+                    isComplete: scan.accessibilityIsComplete
+                )
+                let resolvedDock = await dockTargets
+
+                if paintedFromCache {
+                    self.replacePresentedTargets(immediate, dockTargets: resolvedDock)
+                } else {
+                    self.present(immediate, dockTargets: resolvedDock, targetPID: targetPID)
+                }
+
+                let mergedTargets = await withTaskCancellationHandler {
+                    await scan.mergedTargetsTask.value
+                } onCancel: {
+                    scan.cancelSupplement()
+                }
+                try Task.checkCancellation()
+                guard self.scanID == id,
+                      self.overlay.isPresented,
+                      mergedTargets.count != scan.accessibilityTargets.count else {
+                    return
+                }
+                self.replacePresentedTargets(
+                    ScanResult(
+                        windowFrame: scan.windowFrame,
+                        targets: mergedTargets,
+                        isComplete: scan.accessibilityIsComplete
+                    ),
+                    dockTargets: resolvedDock
+                )
             } catch let error as ScanError {
                 guard !Task.isCancelled else { return }
+                if paintedFromCache {
+                    // Cache paint already showed a validated overlay; a scan
+                    // failure right after (e.g., window vanished mid-race)
+                    // should not error-beep over live hints.
+                    self.cancelHintMode(discardOverlay: true)
+                    return
+                }
                 self.preferences.message = error.localizedDescription
                 switch error {
                 case .accessibilityUnavailable:
@@ -417,6 +570,7 @@ final class AppController: NSObject {
     }
 
     private func executeSystemCommand(_ command: SystemCommand) {
+        activatedDuringSession = true
         cancelHintMode(discardOverlay: true)
         systemCommandTask?.cancel()
         let id = UUID()
@@ -456,14 +610,26 @@ final class AppController: NSObject {
             do {
                 try await Task.sleep(for: .milliseconds(180))
                 async let dockTargets = self.scanner.scanDockTargets()
-                let result = try await self.scanner.scanFocusedWindow(pid: pid)
+                let scan = try await self.scanner.beginFocusedWindowScan(pid: pid)
+                let mergedTargets = await withTaskCancellationHandler {
+                    await scan.mergedTargetsTask.value
+                } onCancel: {
+                    scan.cancelSupplement()
+                }
                 guard !Task.isCancelled,
                       self.scrollRefreshID == id,
                       self.activeTargetPID == pid,
                       self.overlay.isPresented else {
                     return
                 }
-                self.replacePresentedTargets(result, dockTargets: await dockTargets)
+                self.replacePresentedTargets(
+                    ScanResult(
+                        windowFrame: scan.windowFrame,
+                        targets: mergedTargets,
+                        isComplete: scan.accessibilityIsComplete
+                    ),
+                    dockTargets: await dockTargets
+                )
             } catch is CancellationError {
                 return
             } catch {
@@ -479,6 +645,7 @@ final class AppController: NSObject {
             HintAssignment(target: $0, code: "")
         }
         activeWindowFrame = result.windowFrame
+        lastPresentation = (result, dockTargets)
         overlay.replaceAssignments(
             elementAssignments + commandAssignments,
             windowFrame: result.windowFrame
@@ -486,6 +653,7 @@ final class AppController: NSObject {
     }
 
     private func activate(_ target: ClickTarget, kind: TargetActivator.Kind) {
+        activatedDuringSession = true
         if let arrangement = target.windowArrangement,
            let pid = activeTargetPID {
             runWindowArrangement(arrangement, pid: pid)
@@ -515,6 +683,8 @@ final class AppController: NSObject {
         }
         activeTargetPID = targetPID
         activeWindowFrame = result.windowFrame
+        activatedDuringSession = false
+        lastPresentation = (result, dockTargets)
         guard input.start() else {
             overlay.dismiss()
             preferences.message = "Keyboard monitoring could not start. Recheck Accessibility permission."
@@ -534,6 +704,21 @@ final class AppController: NSObject {
         systemCommands.cancel()
         pendingActivation = nil
         overlay.setPendingSystemCommand(nil)
+        if overlay.isPresented,
+           let pid = activeTargetPID,
+           let frame = activeWindowFrame,
+           let shown = lastPresentation {
+            overlaySessionSnapshot = OverlaySessionSnapshot(
+                record: ScanSnapshotRecord(
+                    pid: pid,
+                    windowFrame: frame,
+                    endedReadOnly: !activatedDuringSession,
+                    capturedAt: .now
+                ),
+                result: shown.result,
+                dockTargets: shown.dockTargets
+            )
+        }
         if discardOverlay {
             overlay.dismiss()
         } else {
@@ -554,10 +739,236 @@ final class AppController: NSObject {
         return lastTargetPID
     }
 
+    @objc private func toggleKeepAwakeFromMenu() {
+        toggleKeepAwake()
+    }
+
+    func toggleKeepAwake() {
+        setKeepAwake(!keepAwake.isActive)
+    }
+
+    private func setKeepAwake(_ enabled: Bool) {
+        guard enabled != keepAwake.isActive else { return }
+        if enabled {
+            guard keepAwake.activate() else {
+                NSSound.beep()
+                preferences.message = "macOS refused the keep-awake power assertions."
+                return
+            }
+        } else {
+            keepAwake.deactivate()
+        }
+        preferences.setKeepAwakePreferred(enabled)
+        updateStatusIcon()
+        if enabled {
+            configureBatteryLidForActiveSession()
+        } else {
+            settleBatteryLidClosePreventionAfterCancellation()
+            revertBatteryLidAfterToggleOff()
+        }
+    }
+
+    private func refreshBatteryLidClosePrevention(staleRevertCheck: Bool = false) {
+        if isBatteryLidCloseAuthorizationInFlight {
+            requiresBatteryLidCloseSettlement = true
+        }
+        let previousTask = keepAwakeConfigurationTask
+        previousTask?.cancel()
+        keepAwakeConfigurationTask = Task { [weak self, previousTask] in
+            await previousTask?.value
+            guard let self, !Task.isCancelled else { return }
+            let state = await self.keepAwake.refreshBatteryLidClosePrevention()
+            guard !Task.isCancelled else { return }
+            self.reconcileBatteryLidClosePrevention(state)
+            if staleRevertCheck {
+                // A previous session may have enabled the persistent setting
+                // and then crashed or been killed before reverting it. Heal
+                // silently when the one-time grant allows it.
+                guard !self.keepAwake.isActive,
+                      !self.preferences.keepAwakePreferred,
+                      state == true else {
+                    return
+                }
+                if KeepAwakeManager.hasPasswordlessLidGrant() {
+                    try? await self.keepAwake.disableBatteryLidClosePrevention()
+                }
+                self.updateStatusIcon()
+            }
+        }
+    }
+
+    private func settleBatteryLidClosePreventionAfterCancellation() {
+        if isBatteryLidCloseAuthorizationInFlight {
+            requiresBatteryLidCloseSettlement = true
+        }
+        let previousTask = keepAwakeConfigurationTask
+        previousTask?.cancel()
+        keepAwakeConfigurationTask = Task { [weak self, previousTask] in
+            await previousTask?.value
+            guard let self, !Task.isCancelled else { return }
+            let state = await self.keepAwake.refreshBatteryLidClosePrevention()
+            guard !Task.isCancelled else { return }
+            self.reconcileBatteryLidClosePrevention(state)
+        }
+    }
+
+    private func reconcileBatteryLidClosePrevention(_ state: Bool?) {
+        updateStatusIcon()
+        guard requiresBatteryLidCloseSettlement else { return }
+        guard state != nil else {
+            presentBatteryLidCloseError(
+                title: "Could Not Verify Battery Sleep Setting",
+                message: "A pending change was cancelled, but Eclick could not verify the result. The battery sleep setting may be enabled. Check pmset -g or restore the default with: sudo pmset -b disablesleep 0"
+            )
+            return
+        }
+        requiresBatteryLidCloseSettlement = false
+    }
+
+    private func configureBatteryLidForActiveSession() {
+        guard keepAwake.isActive,
+              KeepAwakeManager.currentPowerSource() == .battery else { return }
+        let previousTask = keepAwakeConfigurationTask
+        previousTask?.cancel()
+        keepAwakeConfigurationTask = Task { [weak self, previousTask] in
+            await previousTask?.value
+            guard let self, !Task.isCancelled else { return }
+            let state = await self.keepAwake.refreshBatteryLidClosePrevention()
+            guard !Task.isCancelled else { return }
+            self.reconcileBatteryLidClosePrevention(state)
+            guard self.keepAwake.isActive, state == false else {
+                self.updateStatusIcon()
+                return
+            }
+            // Without the grant the OS admin sheet itself is the one-time
+            // consent (same flow as comparable lid-awake utilities). If the
+            // user cancels it, never nag again — a menu row stays available.
+            if !KeepAwakeManager.hasPasswordlessLidGrant(),
+               UserDefaults.standard.bool(forKey: Self.lidGrantDeclinedKey) {
+                self.updateStatusIcon()
+                return
+            }
+            do {
+                try await self.keepAwake.enableBatteryLidClosePrevention()
+                UserDefaults.standard.set(false, forKey: Self.lidGrantDeclinedKey)
+            } catch is CancellationError {
+                UserDefaults.standard.set(true, forKey: Self.lidGrantDeclinedKey)
+            } catch {
+                self.presentBatteryLidCloseError(
+                    title: "Could Not Enable Lid-Closed Keep Awake",
+                    message: error.localizedDescription
+                )
+            }
+            self.updateStatusIcon()
+        }
+    }
+
+    private func revertBatteryLidAfterToggleOff() {
+        let previousTask = keepAwakeConfigurationTask
+        previousTask?.cancel()
+        keepAwakeConfigurationTask = Task { [weak self, previousTask] in
+            await previousTask?.value
+            guard let self, !Task.isCancelled else { return }
+            let state = await self.keepAwake.refreshBatteryLidClosePrevention()
+            guard !Task.isCancelled else { return }
+            self.reconcileBatteryLidClosePrevention(state)
+            guard !self.keepAwake.isActive, state == true else {
+                self.updateStatusIcon()
+                return
+            }
+            // Silent with the one-time grant; otherwise a single password prompt.
+            do {
+                try await self.keepAwake.disableBatteryLidClosePrevention()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.presentBatteryLidCloseError(
+                    title: "Could Not Restore Battery Sleep",
+                    message: error.localizedDescription
+                )
+            }
+            self.updateStatusIcon()
+        }
+    }
+
+    @objc private func restoreDefaultBatterySleepFromMenu() {
+        revertBatteryLidAfterToggleOff()
+    }
+
+    @objc private func enableLidPreventionFromMenu() {
+        UserDefaults.standard.set(false, forKey: Self.lidGrantDeclinedKey)
+        configureBatteryLidForActiveSession()
+    }
+
+    private func presentBatteryLidCloseError(title: String, message: String) {
+        NSSound.beep()
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = title
+        alert.informativeText = message
+        alert.runModal()
+    }
+
+    private func refreshKeepAwakeMenuItem() {
+        guard let keepAwakeMenuItem else { return }
+        keepAwakeMenuItem.state = keepAwake.isActive ? .on : .off
+        let staleLidState = keepAwake.batteryLidClosePreventionEnabled == true
+            && !keepAwake.isActive
+            && !preferences.keepAwakePreferred
+        restoreBatterySleepMenuItem?.isHidden = !staleLidState
+        let canOfferLidSetup = keepAwake.isActive
+            && KeepAwakeManager.currentPowerSource() == .battery
+            && keepAwake.batteryLidClosePreventionEnabled == false
+            && !KeepAwakeManager.hasPasswordlessLidGrant()
+        enableLidPreventionMenuItem?.isHidden = !canOfferLidSetup
+        if !keepAwake.isActive,
+           keepAwake.batteryLidClosePreventionEnabled == true {
+            keepAwakeMenuItem.subtitle = "Battery lid-close sleep disabled system-wide"
+        } else if keepAwake.isActive, !keepAwake.lidClosePreventionAvailable {
+            keepAwakeMenuItem.subtitle = "Lid close still sleeps on battery"
+        } else if keepAwake.isActive,
+                  KeepAwakeManager.currentPowerSource() == .battery {
+            keepAwakeMenuItem.subtitle = "Lid-closed battery mode enabled — keep out of bags"
+        } else {
+            keepAwakeMenuItem.subtitle = nil
+        }
+    }
+
+    private func updateStatusIcon() {
+        refreshKeepAwakeMenuItem()
+        guard let button = statusItem.button else { return }
+        if isScanningStatusBar {
+            button.image = NSImage(
+                systemSymbolName: "viewfinder",
+                accessibilityDescription: "Eclick is scanning"
+            )
+            button.toolTip = "Eclick — scanning focused window"
+        } else if keepAwake.isActive {
+            let lidSupported = keepAwake.lidClosePreventionAvailable
+            button.image = NSImage(
+                systemSymbolName: lidSupported ? "cup.and.saucer.fill" : "cup.and.saucer",
+                accessibilityDescription: lidSupported
+                    ? "Eclick is keeping your Mac awake"
+                    : "Eclick is keeping your Mac awake — connect power for lid-close prevention"
+            )
+            button.toolTip = lidSupported
+                ? "Eclick — keeping Mac awake, lid close included. Keep out of bags. Click to stop."
+                : "Eclick — keeping Mac awake. Lid close still sleeps on battery. Click to stop."
+        } else {
+            button.image = NSImage(
+                systemSymbolName: "cursorarrow.click",
+                accessibilityDescription: "Eclick"
+            )
+            if keepAwake.batteryLidClosePreventionEnabled == true {
+                button.toolTip = "Eclick — battery lid-close sleep is disabled system-wide. Keep out of bags."
+            } else {
+                button.toolTip = "Eclick — keyboard hints for clickable controls"
+            }
+        }
+    }
+
     private func restoreStatusIcon() {
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "cursorarrow.click",
-            accessibilityDescription: "Eclick"
-        )
+        isScanningStatusBar = false
+        updateStatusIcon()
     }
 }

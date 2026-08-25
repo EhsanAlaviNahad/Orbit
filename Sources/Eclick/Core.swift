@@ -163,6 +163,16 @@ struct HintColorComponents: Equatable, Sendable {
     }
 }
 
+enum HintLabelMetrics {
+    static let defaultFontSize = 13.0
+    static let minimumFontSize = 10.0
+    static let maximumFontSize = 26.0
+
+    static func clampedFontSize(_ size: Double) -> Double {
+        min(maximumFontSize, max(minimumFontSize, size))
+    }
+}
+
 enum OverlayShortcutPolicy {
     static func scrollDirection(keyCode: UInt16, flags: CGEventFlags) -> ScrollDirection? {
         guard flags.contains(.maskControl) else { return nil }

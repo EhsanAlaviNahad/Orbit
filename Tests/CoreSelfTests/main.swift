@@ -184,6 +184,9 @@ enum CoreSelfTests {
         check(HintColorComponents(red: 1.2, green: 0.3, blue: 0.4) == nil, "out-of-range custom color rejected")
         check(HintColorComponents(red: 0, green: 0, blue: 0)?.usesLightForeground == true, "dark custom color uses white text")
         check(HintColorComponents(red: 1, green: 1, blue: 1)?.usesLightForeground == false, "light custom color uses black text")
+        check(HintLabelMetrics.clampedFontSize(9) == 10, "hint size clamps to desktop minimum")
+        check(HintLabelMetrics.clampedFontSize(13) == 13, "hint size preserves default")
+        check(HintLabelMetrics.clampedFontSize(30) == 26, "hint size supports up to 200 percent")
 
         check(
             ActivationActionPolicy.preferredAction(from: ["AXShowMenu"]) == nil,

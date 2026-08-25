@@ -483,7 +483,7 @@ final class HintOverlayController {
         appearance: HintLabelAppearance,
         customColor: HintColorComponents
     ) {
-        hintFontSize = min(20, max(10, fontSize))
+        hintFontSize = CGFloat(HintLabelMetrics.clampedFontSize(Double(fontSize)))
         hintAppearance = appearance
         hintCustomColor = customColor
         for view in overlayViews {
@@ -760,12 +760,12 @@ private final class HintOverlayView: NSView {
 
     override func layout() {
         super.layout()
-        let width = min(560, bounds.width - 40)
+        let width = min(600, bounds.width - 48)
         guard width > 220 else {
             searchHUD.isHidden = true
             return
         }
-        let height: CGFloat = 88
+        let height: CGFloat = 82
         let preferredY = bounds.minY + bounds.height * 0.68
         let y = min(bounds.maxY - height - 72, max(bounds.minY + 40, preferredY))
         searchHUD.frame = CGRect(
@@ -830,9 +830,9 @@ private final class HintOverlayView: NSView {
         let selected = assignment.target.id == selectedTargetID
         if selected {
             let highlight = targetFrame.insetBy(dx: -3, dy: -3).intersection(bounds)
-            NSColor.systemBlue.withAlphaComponent(0.18).setFill()
+            NSColor.controlAccentColor.withAlphaComponent(0.18).setFill()
             NSBezierPath(roundedRect: highlight, xRadius: 7, yRadius: 7).fill()
-            NSColor.systemBlue.setStroke()
+            NSColor.controlAccentColor.setStroke()
             let outline = NSBezierPath(roundedRect: highlight, xRadius: 7, yRadius: 7)
             outline.lineWidth = 3
             outline.stroke()
@@ -878,10 +878,13 @@ private final class HintOverlayView: NSView {
 
     private func selectedColors() -> (fill: NSColor, foreground: NSColor, border: NSColor) {
         if let cachedSelectedColors { return cachedSelectedColors }
+        let foreground = accessibleForeground(for: .controlAccentColor)
         let colors = (
             fill: NSColor.controlAccentColor.withAlphaComponent(0.98),
-            foreground: NSColor.white,
-            border: NSColor.white.withAlphaComponent(0.35)
+            foreground: foreground,
+            border: foreground.withAlphaComponent(
+                NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.7 : 0.35
+            )
         )
         cachedSelectedColors = colors
         return colors
@@ -904,10 +907,13 @@ private final class HintOverlayView: NSView {
                 NSColor.white.withAlphaComponent(0.28)
             )
         case .accent:
+            let foreground = accessibleForeground(for: .controlAccentColor)
             colors = (
                 NSColor.controlAccentColor.withAlphaComponent(0.94),
-                .white,
-                NSColor.white.withAlphaComponent(0.28)
+                foreground,
+                foreground.withAlphaComponent(
+                    NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.7 : 0.28
+                )
             )
         case .white:
             colors = (
@@ -932,6 +938,18 @@ private final class HintOverlayView: NSView {
         return colors
     }
 
+    private func accessibleForeground(for background: NSColor) -> NSColor {
+        guard let color = background.usingColorSpace(.sRGB),
+              let components = HintColorComponents(
+                  red: color.redComponent,
+                  green: color.greenComponent,
+                  blue: color.blueComponent
+              ) else {
+            return .white
+        }
+        return components.usesLightForeground ? .white : .black
+    }
+
     private func localFrame(for quartzFrame: CGRect) -> CGRect {
         CGRect(
             x: quartzFrame.minX - desktopOrigin.x,
@@ -947,6 +965,8 @@ private final class SearchHUDView: NSGlassEffectView {
     private let icon = NSImageView()
     private let searchLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
+    private let resultLabel = NSTextField(labelWithString: "")
+    private let separator = NSBox()
     private let content = NSView()
 
     var state = SearchHUDState.empty {
@@ -959,28 +979,44 @@ private final class SearchHUDView: NSGlassEffectView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         style = .regular
-        cornerRadius = 22
-        tintColor = NSColor.controlBackgroundColor.withAlphaComponent(0.12)
+        cornerRadius = 20
         effectIsInteractive = false
         contentView = content
 
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Eclick search")
+
         icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
         icon.contentTintColor = .secondaryLabelColor
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 19, weight: .medium)
+        icon.imageScaling = .scaleProportionallyDown
 
-        searchLabel.font = .systemFont(ofSize: 21, weight: .medium)
+        searchLabel.font = .systemFont(ofSize: 22, weight: .regular)
         searchLabel.textColor = .labelColor
         searchLabel.lineBreakMode = .byTruncatingHead
         searchLabel.maximumNumberOfLines = 1
 
-        detailLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        detailLabel.font = .systemFont(ofSize: 12.5, weight: .regular)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.maximumNumberOfLines = 1
 
+        resultLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        resultLabel.textColor = .tertiaryLabelColor
+        resultLabel.alignment = .right
+        resultLabel.lineBreakMode = .byTruncatingTail
+        resultLabel.maximumNumberOfLines = 1
+
+        separator.boxType = .separator
+        separator.titlePosition = .noTitle
+        separator.setAccessibilityElement(false)
+
         content.addSubview(icon)
         content.addSubview(searchLabel)
         content.addSubview(detailLabel)
+        content.addSubview(resultLabel)
+        content.addSubview(separator)
         refresh()
     }
 
@@ -1051,9 +1087,33 @@ private final class SearchHUDView: NSGlassEffectView {
     override func layout() {
         super.layout()
         content.frame = bounds
-        icon.frame = CGRect(x: 20, y: 44, width: 24, height: 24)
-        searchLabel.frame = CGRect(x: 56, y: 43, width: bounds.width - 76, height: 29)
-        detailLabel.frame = CGRect(x: 56, y: 17, width: bounds.width - 76, height: 18)
+        let horizontalInset: CGFloat = 20
+        let resultWidth: CGFloat = resultLabel.isHidden ? 0 : 96
+        icon.frame = CGRect(x: horizontalInset, y: 43, width: 24, height: 24)
+        searchLabel.frame = CGRect(
+            x: 56,
+            y: 41,
+            width: bounds.width - 76 - resultWidth,
+            height: 29
+        )
+        resultLabel.frame = CGRect(
+            x: bounds.width - horizontalInset - resultWidth,
+            y: 45,
+            width: resultWidth,
+            height: 18
+        )
+        separator.frame = CGRect(
+            x: horizontalInset,
+            y: 33,
+            width: bounds.width - horizontalInset * 2,
+            height: 1
+        )
+        detailLabel.frame = CGRect(
+            x: horizontalInset,
+            y: 9,
+            width: bounds.width - horizontalInset * 2,
+            height: 18
+        )
     }
 
     private func refresh() {
@@ -1065,6 +1125,18 @@ private final class SearchHUDView: NSGlassEffectView {
             icon.contentTintColor = state.pendingSystemCommand == command
                 ? .systemOrange
                 : .secondaryLabelColor
+        } else if state.matchCount == 0, !state.query.isEmpty {
+            icon.image = NSImage(
+                systemSymbolName: "magnifyingglass",
+                accessibilityDescription: "No results"
+            )
+            icon.contentTintColor = .tertiaryLabelColor
+        } else if state.selectedIsWindowCommand {
+            icon.image = NSImage(
+                systemSymbolName: "macwindow",
+                accessibilityDescription: "Window command"
+            )
+            icon.contentTintColor = .secondaryLabelColor
         } else {
             icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
             icon.contentTintColor = .secondaryLabelColor
@@ -1074,47 +1146,63 @@ private final class SearchHUDView: NSGlassEffectView {
             searchLabel.attributedStringValue = NSAttributedString(
                 string: "Search",
                 attributes: [
-                    .font: NSFont.systemFont(ofSize: 21, weight: .medium),
-                    .foregroundColor: NSColor.tertiaryLabelColor
+                    .font: NSFont.systemFont(ofSize: 22, weight: .regular),
+                    .foregroundColor: NSColor.secondaryLabelColor
                 ]
             )
-            detailLabel.stringValue = "Type an element, window command, or system command"
+            detailLabel.stringValue = "Search controls, hints, and commands"
+            resultLabel.stringValue = ""
+            resultLabel.isHidden = true
         } else {
             if state.selectionIsAll {
                 searchLabel.attributedStringValue = NSAttributedString(
                     string: state.query,
                     attributes: [
-                        .font: NSFont.systemFont(ofSize: 21, weight: .medium),
-                        .foregroundColor: NSColor.white,
-                        .backgroundColor: NSColor.systemBlue
+                        .font: NSFont.systemFont(ofSize: 22, weight: .regular),
+                        .foregroundColor: NSColor.selectedTextColor,
+                        .backgroundColor: NSColor.selectedTextBackgroundColor
                     ]
                 )
             } else {
                 searchLabel.attributedStringValue = NSAttributedString(
                     string: state.query,
                     attributes: [
-                        .font: NSFont.systemFont(ofSize: 21, weight: .medium),
+                        .font: NSFont.systemFont(ofSize: 22, weight: .regular),
                         .foregroundColor: NSColor.labelColor
                     ]
                 )
             }
             if let command = state.systemCommand {
+                resultLabel.stringValue = ""
+                resultLabel.isHidden = true
                 if state.pendingSystemCommand == command {
                     detailLabel.stringValue = command.confirmationPrompt
                 } else {
-                    detailLabel.stringValue = "\(command.displayName)  •  Return: confirm  •  Esc to close"
+                    detailLabel.stringValue = "\(command.displayName)  ·  ↩ Confirm  ·  esc Close"
                 }
             } else if state.matchCount == 0 {
-                detailLabel.stringValue = "No results  •  Delete to edit  •  Esc to close"
+                detailLabel.stringValue = "No results  ·  Delete to edit  ·  esc Close"
+                resultLabel.stringValue = ""
+                resultLabel.isHidden = true
             } else if state.selectedIsWindowCommand, let selectedLabel = state.selectedLabel {
-                detailLabel.stringValue = "\(selectedLabel)  •  Return: run command  •  Tab/↑/↓: choose"
+                detailLabel.stringValue = "\(selectedLabel)  ·  ↩ Run  ·  ↑↓ Choose"
+                updateResultLabel()
             } else if let selectedLabel = state.selectedLabel {
-                detailLabel.stringValue = "\(selectedLabel)  •  Return: click  •  Tab/↑/↓: choose"
+                detailLabel.stringValue = "\(selectedLabel)  ·  ↩ Click  ·  ⇧↩ Right-click  ·  ↑↓ Choose"
+                updateResultLabel()
             } else {
-                detailLabel.stringValue = "\(state.matchCount) result\(state.matchCount == 1 ? "" : "s")"
+                detailLabel.stringValue = "↑↓ Choose  ·  ↩ Open  ·  esc Close"
+                updateResultLabel()
             }
         }
+        setAccessibilityValue(state.query.isEmpty ? "Empty" : state.query)
+        setAccessibilityHelp(detailLabel.stringValue)
         needsLayout = true
+    }
+
+    private func updateResultLabel() {
+        resultLabel.stringValue = "\(state.matchCount) result\(state.matchCount == 1 ? "" : "s")"
+        resultLabel.isHidden = false
     }
 
 }

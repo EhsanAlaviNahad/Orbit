@@ -52,8 +52,8 @@ final class PreferencesModel: ObservableObject {
 
         self.defaults = defaults
         hintLabelSize = defaults.object(forKey: "hints.fontSize") == nil
-            ? 13
-            : min(20, max(10, defaults.double(forKey: "hints.fontSize")))
+            ? HintLabelMetrics.defaultFontSize
+            : HintLabelMetrics.clampedFontSize(defaults.double(forKey: "hints.fontSize"))
         hintLabelAppearance = HintLabelAppearance(
             rawValue: defaults.string(forKey: "hints.appearance") == "monochrome"
                 ? "white"
@@ -121,7 +121,8 @@ final class PreferencesModel: ObservableObject {
         refresh()
     }
 
-    func setHintLabelSize(_ size: Double) {        hintLabelSize = min(20, max(10, size))
+    func setHintLabelSize(_ size: Double) {
+        hintLabelSize = HintLabelMetrics.clampedFontSize(size)
         defaults.set(hintLabelSize, forKey: "hints.fontSize")
         notifyHintStyleChange()
     }
@@ -253,6 +254,9 @@ struct SettingsView: View {
                         }
                     }
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityLabel("Activation shortcut")
+                    .accessibilityValue(model.isRecordingShortcut ? "Recording" : model.shortcut.displayName)
+                    .accessibilityHint("Change the shortcut used to show Eclick")
                 }
             }
 
@@ -296,10 +300,12 @@ struct SettingsView: View {
                             get: { model.hintLabelSize },
                             set: model.setHintLabelSize
                         ),
-                        in: 10...20,
+                        in: HintLabelMetrics.minimumFontSize...HintLabelMetrics.maximumFontSize,
                         step: 1
                     )
                     .frame(width: 180)
+                    .accessibilityLabel("Hint label size")
+                    .accessibilityValue("\(Int(model.hintLabelSize)) points")
                     Text("\(Int(model.hintLabelSize)) pt")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -317,6 +323,7 @@ struct SettingsView: View {
                         Text(appearance.displayName).tag(appearance)
                     }
                 }
+                .accessibilityHint("Changes the appearance of labels shown over clickable controls")
 
 
                 if model.hintLabelAppearance == .custom {
@@ -333,6 +340,7 @@ struct SettingsView: View {
                             supportsOpacity: false
                         )
                         .labelsHidden()
+                        .accessibilityLabel("Hint label custom color")
                         Button("Reset") { model.resetHintLabelCustomColor() }
                     }
                 }
@@ -345,6 +353,8 @@ struct SettingsView: View {
                         appearance: model.hintLabelAppearance,
                         customColor: model.hintLabelCustomColor
                     )
+                    .accessibilityLabel("Hint label preview")
+                    .accessibilityValue("AS, \(Int(model.hintLabelSize)) points, \(model.hintLabelAppearance.displayName)")
                 }
             }
 
@@ -356,7 +366,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 500, height: 520)
+        .frame(minWidth: 500, idealWidth: 520, minHeight: 500, idealHeight: 540)
         .onAppear { model.refresh() }
     }
 
@@ -369,11 +379,16 @@ struct SettingsView: View {
         settings: @escaping () -> Void
     ) -> some View {
         LabeledContent(title) {
-            Text(granted ? "Granted" : "Required")
+            Label(
+                granted ? "Granted" : "Required",
+                systemImage: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            )
                 .foregroundStyle(granted ? .green : .orange)
+                .accessibilityLabel("\(title): \(granted ? "Granted" : "Required")")
             Button(granted ? "Settings" : requestTitle) {
                 granted ? settings() : request()
             }
+            .accessibilityHint("Opens System Settings")
         }
     }
 }
@@ -399,7 +414,11 @@ private struct HintLabelPreview: View {
     private var foreground: Color {
         switch appearance {
         case .classic: .black
-        case .glass, .accent: .white
+        case .glass: .white
+        case .accent:
+            HintColorComponents(nsColor: NSColor.controlAccentColor)?.usesLightForeground == true
+                ? .white
+                : .black
         case .white: .black
         case .custom: customColor.usesLightForeground ? .white : .black
         }

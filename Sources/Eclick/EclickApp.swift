@@ -159,7 +159,9 @@ final class AppController: NSObject {
         let controller = NSHostingController(rootView: SettingsView(model: preferences))
         let window = NSWindow(contentViewController: controller)
         window.title = "Eclick Settings"
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 520, height: 540))
+        window.contentMinSize = NSSize(width: 500, height: 500)
         window.isReleasedWhenClosed = false
         window.center()
         settingsWindow = window

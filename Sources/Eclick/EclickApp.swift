@@ -210,10 +210,7 @@ final class AppController: NSObject {
 
     private func configureStatusItem() {
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "cursorarrow.click",
-                accessibilityDescription: "Eclick"
-            )
+            button.image = MenuIcon.makeIdleIcon()
             button.toolTip = "Eclick — keyboard hints for clickable controls"
         }
 
@@ -291,10 +288,7 @@ final class AppController: NSObject {
 
         let id = UUID()
         scanID = id
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "viewfinder",
-            accessibilityDescription: "Eclick is scanning"
-        )
+        statusItem.button?.image = MenuIcon.makeScanningIcon()
         scanTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -676,9 +670,6 @@ final class AppController: NSObject {
     }
 
     private func restoreStatusIcon() {
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "cursorarrow.click",
-            accessibilityDescription: "Eclick"
-        )
+        statusItem.button?.image = MenuIcon.makeIdleIcon()
     }
 }

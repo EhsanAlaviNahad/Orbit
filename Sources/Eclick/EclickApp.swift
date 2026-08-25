@@ -32,32 +32,40 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 final class AppController: NSObject {
-    private struct CachedScan {
-        let pid: pid_t
-        let result: ScanResult
-        let createdAt: Date
-    }
-
-    private static let scanCacheLifetime: TimeInterval = 15
-
     private let scanner = TargetScanner()
     private let hotKey = HotKeyRegistrar()
     private let overlay = HintOverlayController()
     private let input = HintInputMonitor()
     private let preferences = PreferencesModel()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let systemCommands: SystemCommandCoordinator
 
     private var settingsWindow: NSWindow?
     private var scanTask: Task<Void, Never>?
     private var scanID: UUID?
+    private var arrangementTask: Task<Void, Never>?
+    private var arrangementID: UUID?
+    private var systemCommandTask: Task<Void, Never>?
+    private var systemCommandID: UUID?
+    private var scrollRefreshTask: Task<Void, Never>?
+    private var scrollRefreshID: UUID?
     private var activateMenuItem: NSMenuItem?
-    private var pendingActivation: ClickTarget?
-    private var pendingActivationKind: TargetActivator.Kind = .singleClick
-    private var singleClickTask: Task<Void, Never>?
-    private var enterPressCount = 0
-    private var cachedScan: CachedScan?
+    private var lastTargetPID: pid_t?
+    private var activeTargetPID: pid_t?
+    private var activeWindowFrame: CGRect?
+    private var pendingActivation: (target: ClickTarget, kind: TargetActivator.Kind)?
+    private var activatedDuringSession = false
+    private var lastPresentation: (result: ScanResult, dockTargets: [ClickTarget])?
+    private var overlaySessionSnapshot: OverlaySessionSnapshot?
 
-    override init() {
+    private struct OverlaySessionSnapshot {
+        let record: ScanSnapshotRecord
+        let result: ScanResult
+        let dockTargets: [ClickTarget]
+    }
+
+    init(systemCommandExecutor: any SystemCommandExecuting = NativeSystemCommandExecutor()) {
+        systemCommands = SystemCommandCoordinator(executor: systemCommandExecutor)
         super.init()
         configureStatusItem()
         configureShortcut()
@@ -65,10 +73,15 @@ final class AppController: NSObject {
         input.onInput = { [weak self] value in self?.handle(value) }
         overlay.updateHintStyle(
             fontSize: CGFloat(preferences.hintLabelSize),
-            appearance: preferences.hintLabelAppearance
+            appearance: preferences.hintLabelAppearance,
+            customColor: preferences.hintLabelCustomColor
         )
-        preferences.onHintLabelStyleChange = { [weak self] fontSize, appearance in
-            self?.overlay.updateHintStyle(fontSize: fontSize, appearance: appearance)
+        preferences.onHintLabelStyleChange = { [weak self] fontSize, appearance, customColor in
+            self?.overlay.updateHintStyle(
+                fontSize: fontSize,
+                appearance: appearance,
+                customColor: customColor
+            )
         }
         preferences.onShortcutChange = { [weak self] shortcut in
             guard let self else { return }
@@ -81,18 +94,54 @@ final class AppController: NSObject {
                 throw error
             }
         }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(frontmostApplicationDidChange(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+        if let application = NSWorkspace.shared.frontmostApplication,
+           application.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            lastTargetPID = application.processIdentifier
+        }
     }
 
     func shutdown() {
         cancelHintMode()
+        input.shutdown()
+        arrangementTask?.cancel()
+        arrangementTask = nil
+        arrangementID = nil
+        systemCommandTask?.cancel()
+        systemCommandTask = nil
+        systemCommandID = nil
+        scrollRefreshTask?.cancel()
+        scrollRefreshTask = nil
+        scrollRefreshID = nil
         hotKey.shutdown()
         preferences.shutdown()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         settingsWindow?.close()
         settingsWindow = nil
     }
 
     func refreshPreferences() {
         preferences.refresh()
+    }
+
+    @objc private func frontmostApplicationDidChange(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                as? NSRunningApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return
+        }
+        if application.processIdentifier != lastTargetPID {
+            cancelHintMode(discardOverlay: true)
+            arrangementTask?.cancel()
+            arrangementTask = nil
+            arrangementID = nil
+        }
+        lastTargetPID = application.processIdentifier
     }
 
     @objc private func toggleHintModeFromMenu() {
@@ -110,12 +159,38 @@ final class AppController: NSObject {
         let controller = NSHostingController(rootView: SettingsView(model: preferences))
         let window = NSWindow(contentViewController: controller)
         window.title = "Eclick Settings"
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 520, height: 540))
+        window.contentMinSize = NSSize(width: 500, height: 500)
         window.isReleasedWhenClosed = false
         window.center()
         settingsWindow = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func runWindowArrangement(_ arrangement: WindowArrangement, pid: pid_t) {
+        cancelHintMode(discardOverlay: true)
+        arrangementTask?.cancel()
+        let id = UUID()
+        arrangementID = id
+        arrangementTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.arrangementID == id {
+                    self.arrangementTask = nil
+                    self.arrangementID = nil
+                }
+            }
+            do {
+                try await WindowArranger.arrangeFocusedWindow(pid: pid, arrangement: arrangement)
+            } catch is CancellationError {
+                return
+            } catch {
+                NSSound.beep()
+                self.preferences.message = error.localizedDescription
+            }
+        }
     }
 
     @objc private func quit() {
@@ -137,10 +212,7 @@ final class AppController: NSObject {
 
     private func configureStatusItem() {
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "cursorarrow.click",
-                accessibilityDescription: "Eclick"
-            )
+            button.image = MenuIcon.makeIdleIcon()
             button.toolTip = "Eclick — keyboard hints for clickable controls"
         }
 
@@ -208,24 +280,17 @@ final class AppController: NSObject {
             showSettings()
             return
         }
-        guard let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+        guard let targetPID = targetApplicationPID() else {
             NSSound.beep()
             return
         }
 
-        if let cachedScan,
-           cachedScan.pid == targetPID,
-           Date().timeIntervalSince(cachedScan.createdAt) <= Self.scanCacheLifetime {
-            present(cachedScan.result)
-            return
-        }
+        systemCommands.cancel()
+        pendingActivation = nil
 
         let id = UUID()
         scanID = id
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "viewfinder",
-            accessibilityDescription: "Eclick is scanning"
-        )
+        statusItem.button?.image = MenuIcon.makeScanningIcon()
         scanTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -235,106 +300,323 @@ final class AppController: NSObject {
                     self.restoreStatusIcon()
                 }
             }
+            var paintedFromCache = false
             do {
-                let result = try await self.scanner.scanFocusedWindow(pid: targetPID)
-                guard !Task.isCancelled, self.scanID == id else { return }
-                self.cachedScan = CachedScan(pid: targetPID, result: result, createdAt: Date())
-                self.present(result)
+                async let dockTargets = self.scanner.scanDockTargets()
+                // A fresh read-only session snapshot may be validated with a
+                // cheap frame probe while the full scan runs in parallel.
+                let snapshotCandidate = self.overlaySessionSnapshot
+                let cacheProbe: Task<CGRect?, Never>?
+                if let snapshot = snapshotCandidate, snapshot.record.endedReadOnly {
+                    let pidForProbe = targetPID
+                    cacheProbe = Task.detached(priority: .userInitiated) {
+                        await self.scanner.probeFocusedWindowFrame(pid: pidForProbe)
+                    }
+                } else {
+                    cacheProbe = nil
+                }
+                async let scanPromise = self.scanner.beginFocusedWindowScan(pid: targetPID)
+
+                if let cacheProbe {
+                    let probedFrame = await cacheProbe.value
+                    if !Task.isCancelled,
+                       self.scanID == id,
+                       !self.overlay.isPresented,
+                       let snapshot = snapshotCandidate,
+                       let probedFrame,
+                       ScanRecencyPolicy.canInstantlyPresent(
+                        record: snapshot.record,
+                        pid: targetPID,
+                        currentFrame: probedFrame,
+                        now: .now
+                       ) {
+                        self.present(
+                            snapshot.result,
+                            dockTargets: snapshot.dockTargets,
+                            targetPID: targetPID
+                        )
+                        paintedFromCache = self.overlay.isPresented
+                    }
+                }
+
+                // Present accessibility hints as soon as the tree scan lands;
+                // OCR supplements merge in later without blocking first paint.
+                let scan = try await scanPromise
+                guard !Task.isCancelled, self.scanID == id else {
+                    scan.cancelSupplement()
+                    return
+                }
+                let immediate = ScanResult(
+                    windowFrame: scan.windowFrame,
+                    targets: scan.accessibilityTargets,
+                    isComplete: scan.accessibilityIsComplete
+                )
+                let resolvedDock = await dockTargets
+
+                if paintedFromCache {
+                    self.replacePresentedTargets(immediate, dockTargets: resolvedDock)
+                } else {
+                    self.present(immediate, dockTargets: resolvedDock, targetPID: targetPID)
+                }
+
+                let mergedTargets = await withTaskCancellationHandler {
+                    await scan.mergedTargetsTask.value
+                } onCancel: {
+                    scan.cancelSupplement()
+                }
+                try Task.checkCancellation()
+                guard self.scanID == id,
+                      self.overlay.isPresented,
+                      mergedTargets.count != scan.accessibilityTargets.count else {
+                    return
+                }
+                self.replacePresentedTargets(
+                    ScanResult(
+                        windowFrame: scan.windowFrame,
+                        targets: mergedTargets,
+                        isComplete: scan.accessibilityIsComplete
+                    ),
+                    dockTargets: resolvedDock
+                )
+            } catch let error as ScanError {
+                guard !Task.isCancelled else { return }
+                if paintedFromCache {
+                    // Cache paint already showed a validated overlay; a scan
+                    // failure right after (e.g., window vanished mid-race)
+                    // should not error-beep over live hints.
+                    self.cancelHintMode(discardOverlay: true)
+                    return
+                }
+                self.preferences.message = error.localizedDescription
+                switch error {
+                case .accessibilityUnavailable:
+                    self.showSettings()
+                case .noFocusedWindow:
+                    NSSound.beep()
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 self.preferences.message = error.localizedDescription
-                if error is ScanError { self.showSettings() }
+                NSSound.beep()
             }
         }
     }
 
     private func handle(_ inputValue: HintInput) {
-        if pendingActivation != nil {
-            if case .enter = inputValue, pendingActivationKind == .singleClick {
-                enterPressCount += 1
-                if enterPressCount == 2 {
-                    singleClickTask?.cancel()
-                    singleClickTask = nil
-                    pendingActivationKind = .doubleClick
-                }
-                return
-            }
-            if case .keyReleased = inputValue {
-                if pendingActivationKind != .singleClick || enterPressCount == 2 {
-                    finishPendingActivation()
-                } else {
-                    scheduleSingleClick()
-                }
-            }
-            return
-        }
         switch inputValue {
         case let .text(text):
-            overlay.appendSearchText(text)
+            mutateSearchQuery { overlay.appendSearchText(text) }
         case .backspace:
-            overlay.backspace()
+            mutateSearchQuery { overlay.backspace() }
         case .selectAll:
             overlay.selectAll()
         case .copy:
             overlay.copy()
         case .paste:
-            overlay.paste()
+            mutateSearchQuery { overlay.paste() }
         case .enter:
+            pendingActivation = nil
+            if systemCommands.enterKeyDown(query: overlay.query) {
+                overlay.setPendingSystemCommand(systemCommands.pendingCommand)
+                return
+            }
             if let target = overlay.selectedTarget() {
-                pendingActivation = target
-                pendingActivationKind = .singleClick
-                enterPressCount = 1
+                pendingActivation = (target, .singleClick)
+            }
+        case .optionEnter:
+            pendingActivation = nil
+            guard SystemCommandParser.parse(overlay.query) == nil else {
+                systemCommands.cancel()
+                overlay.setPendingSystemCommand(nil)
+                NSSound.beep()
+                return
+            }
+            if let target = overlay.selectedTarget() {
+                pendingActivation = (target, .doubleClick)
             }
         case .shiftEnter:
-            if let target = overlay.selectedTarget() {
-                pendingActivation = target
-                pendingActivationKind = .rightClick
-                enterPressCount = 0
+            pendingActivation = nil
+            guard SystemCommandParser.parse(overlay.query) == nil else {
+                systemCommands.cancel()
+                overlay.setPendingSystemCommand(nil)
+                NSSound.beep()
+                return
             }
+            if let target = overlay.selectedTarget() {
+                pendingActivation = (target, .rightClick)
+            }
+        case let .scroll(direction):
+            pendingActivation = nil
+            systemCommands.cancel()
+            overlay.setPendingSystemCommand(nil)
+            guard let activeTargetPID, let activeWindowFrame else { return }
+            PageScroller.scroll(direction, at: CGPoint(
+                x: activeWindowFrame.midX,
+                y: activeWindowFrame.midY
+            ))
+            overlay.showOnlyDockHints()
+            scheduleHintRefresh(pid: activeTargetPID)
         case .nextResult:
             overlay.moveSelection(by: 1)
         case .previousResult:
             overlay.moveSelection(by: -1)
         case .keyReleased:
-            break
+            if let outcome = systemCommands.enterKeyUp() {
+                pendingActivation = nil
+                switch outcome {
+                case let .confirmationRequested(command):
+                    overlay.setPendingSystemCommand(command)
+                case let .execute(command):
+                    executeSystemCommand(command)
+                }
+            } else if let activation = pendingActivation {
+                pendingActivation = nil
+                activate(activation.target, kind: activation.kind)
+            }
+        case .terminalKeyCancelled:
+            pendingActivation = nil
+            _ = systemCommands.enterKeyUp(isValid: false)
+            overlay.setPendingSystemCommand(nil)
+            NSSound.beep()
+        case .modifierChanged:
+            guard pendingActivation != nil || systemCommands.pendingCommand != nil else { return }
+            pendingActivation = nil
+            systemCommands.modifierDidChange()
+            overlay.setPendingSystemCommand(nil)
+        case .inputInterrupted:
+            pendingActivation = nil
+            systemCommands.inputWasInterrupted()
+            overlay.setPendingSystemCommand(nil)
         case .escape:
             cancelHintMode()
         }
     }
 
-    private func scheduleSingleClick() {
-        guard singleClickTask == nil else { return }
-        singleClickTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            self?.finishPendingActivation()
+    private func mutateSearchQuery(_ mutation: () -> Void) {
+        let previousQuery = overlay.query
+        mutation()
+        guard overlay.query != previousQuery else { return }
+        pendingActivation = nil
+        systemCommands.queryDidChange(to: overlay.query)
+        overlay.setPendingSystemCommand(systemCommands.pendingCommand)
+    }
+
+    private func executeSystemCommand(_ command: SystemCommand) {
+        activatedDuringSession = true
+        cancelHintMode(discardOverlay: true)
+        systemCommandTask?.cancel()
+        let id = UUID()
+        systemCommandID = id
+        systemCommandTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.systemCommandID == id {
+                    self.systemCommandTask = nil
+                    self.systemCommandID = nil
+                }
+            }
+            do {
+                try await self.systemCommands.execute(command)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                NSSound.beep()
+                self.preferences.message = error.localizedDescription
+            }
         }
     }
 
-    private func finishPendingActivation() {
-        guard let target = pendingActivation else { return }
-        let kind = pendingActivationKind
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        pendingActivation = nil
-        pendingActivationKind = .singleClick
-        enterPressCount = 0
-        cachedScan = nil
+    private func scheduleHintRefresh(pid: pid_t) {
+        scrollRefreshTask?.cancel()
+        let id = UUID()
+        scrollRefreshID = id
+        scrollRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.scrollRefreshID == id {
+                    self.scrollRefreshTask = nil
+                    self.scrollRefreshID = nil
+                }
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                async let dockTargets = self.scanner.scanDockTargets()
+                let scan = try await self.scanner.beginFocusedWindowScan(pid: pid)
+                let mergedTargets = await withTaskCancellationHandler {
+                    await scan.mergedTargetsTask.value
+                } onCancel: {
+                    scan.cancelSupplement()
+                }
+                guard !Task.isCancelled,
+                      self.scrollRefreshID == id,
+                      self.activeTargetPID == pid,
+                      self.overlay.isPresented else {
+                    return
+                }
+                self.replacePresentedTargets(
+                    ScanResult(
+                        windowFrame: scan.windowFrame,
+                        targets: mergedTargets,
+                        isComplete: scan.accessibilityIsComplete
+                    ),
+                    dockTargets: await dockTargets
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, self.scrollRefreshID == id else { return }
+                self.preferences.message = error.localizedDescription
+            }
+        }
+    }
+
+    private func replacePresentedTargets(_ result: ScanResult, dockTargets: [ClickTarget]) {
+        let elementAssignments = HintGenerator.assign(to: result.targets + dockTargets)
+        let commandAssignments = WindowCommandCatalog.targets(windowFrame: result.windowFrame).map {
+            HintAssignment(target: $0, code: "")
+        }
+        activeWindowFrame = result.windowFrame
+        lastPresentation = (result, dockTargets)
+        overlay.replaceAssignments(
+            elementAssignments + commandAssignments,
+            windowFrame: result.windowFrame
+        )
+    }
+
+    private func activate(_ target: ClickTarget, kind: TargetActivator.Kind) {
+        activatedDuringSession = true
+        if let arrangement = target.windowArrangement,
+           let pid = activeTargetPID {
+            runWindowArrangement(arrangement, pid: pid)
+            return
+        }
         cancelHintMode(discardOverlay: true)
         TargetActivator.activate(target, kind: kind)
     }
 
-    private func present(_ result: ScanResult) {
-        let assignments = HintGenerator.assign(to: result.targets)
-        guard !assignments.isEmpty else {
-            NSSound.beep()
-            return
+    private func present(
+        _ result: ScanResult,
+        dockTargets: [ClickTarget],
+        targetPID: pid_t
+    ) {
+        systemCommands.cancel()
+        pendingActivation = nil
+        overlay.setPendingSystemCommand(nil)
+        let elementAssignments = HintGenerator.assign(to: result.targets + dockTargets)
+        let commandAssignments = WindowCommandCatalog.targets(windowFrame: result.windowFrame).map {
+            HintAssignment(target: $0, code: "")
         }
+        let assignments = elementAssignments + commandAssignments
         overlay.show(assignments: assignments, windowFrame: result.windowFrame)
         guard overlay.isPresented else {
             NSSound.beep()
             return
         }
+        activeTargetPID = targetPID
+        activeWindowFrame = result.windowFrame
+        activatedDuringSession = false
+        lastPresentation = (result, dockTargets)
         guard input.start() else {
             overlay.dismiss()
             preferences.message = "Keyboard monitoring could not start. Recheck Accessibility permission."
@@ -347,24 +629,49 @@ final class AppController: NSObject {
         scanTask?.cancel()
         scanTask = nil
         scanID = nil
-        pendingActivation = nil
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        pendingActivationKind = .singleClick
-        enterPressCount = 0
+        scrollRefreshTask?.cancel()
+        scrollRefreshTask = nil
+        scrollRefreshID = nil
         input.stop()
+        systemCommands.cancel()
+        pendingActivation = nil
+        overlay.setPendingSystemCommand(nil)
+        if overlay.isPresented,
+           let pid = activeTargetPID,
+           let frame = activeWindowFrame,
+           let shown = lastPresentation {
+            overlaySessionSnapshot = OverlaySessionSnapshot(
+                record: ScanSnapshotRecord(
+                    pid: pid,
+                    windowFrame: frame,
+                    endedReadOnly: !activatedDuringSession,
+                    capturedAt: .now
+                ),
+                result: shown.result,
+                dockTargets: shown.dockTargets
+            )
+        }
         if discardOverlay {
             overlay.dismiss()
         } else {
             overlay.hide()
         }
+        activeTargetPID = nil
+        activeWindowFrame = nil
         restoreStatusIcon()
     }
 
+    private func targetApplicationPID() -> pid_t? {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        if let application = NSWorkspace.shared.frontmostApplication,
+           application.processIdentifier != ownPID {
+            lastTargetPID = application.processIdentifier
+            return application.processIdentifier
+        }
+        return lastTargetPID
+    }
+
     private func restoreStatusIcon() {
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "cursorarrow.click",
-            accessibilityDescription: "Eclick"
-        )
+        statusItem.button?.image = MenuIcon.makeIdleIcon()
     }
 }

@@ -10,7 +10,9 @@ trap 'rm -rf -- "$TEST_ROOT"' EXIT
 swiftc \
   -parse-as-library \
   -module-cache-path "$TEST_ROOT/module-cache" \
+  "$REPO_ROOT/Sources/Eclick/SystemCommand.swift" \
   "$REPO_ROOT/Sources/Eclick/Core.swift" \
+  "$REPO_ROOT/Sources/Eclick/PageScroller.swift" \
   "$REPO_ROOT/Tests/CoreSelfTests/main.swift" \
   -o "$TEST_ROOT/EclickCoreTests"
 

@@ -1,7 +1,7 @@
 # Eclick
 
 <p align="center">
-  <img src="Resources/Brand/eclick-saturn.svg" width="132" alt="Eclick Saturn logo">
+  <img src="Resources/Brand/eclick-saturn-v2.svg" width="132" alt="Eclick Saturn logo">
 </p>
 
 Eclick is a local macOS menu bar utility for clicking visible controls without leaving the keyboard. Press **Command-E**, then search by element name or visible home-row hint and press Enter.

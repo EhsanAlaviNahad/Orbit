@@ -175,8 +175,8 @@ enum HintLabelMetrics {
 
 enum OverlayShortcutPolicy {
     static func scrollDirection(keyCode: UInt16, flags: CGEventFlags) -> ScrollDirection? {
-        guard flags.contains(.maskControl) else { return nil }
-        let incompatible: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift]
+        guard flags.contains(.maskAlternate) else { return nil }
+        let incompatible: CGEventFlags = [.maskCommand, .maskControl, .maskShift]
         guard flags.intersection(incompatible).isEmpty else { return nil }
         return switch keyCode {
         case 126: .up

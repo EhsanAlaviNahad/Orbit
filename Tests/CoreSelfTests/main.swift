@@ -142,12 +142,12 @@ enum CoreSelfTests {
         check(failingCoordinator.pendingCommand == nil, "Escape/close/reopen cancellation resets state")
 
         check(
-            OverlayShortcutPolicy.scrollDirection(keyCode: 126, flags: .maskControl) == .up,
-            "Control-Up scrolls up"
+            OverlayShortcutPolicy.scrollDirection(keyCode: 126, flags: .maskAlternate) == .up,
+            "Option-Up scrolls up"
         )
         check(
-            OverlayShortcutPolicy.scrollDirection(keyCode: 125, flags: .maskControl) == .down,
-            "Control-Down scrolls down"
+            OverlayShortcutPolicy.scrollDirection(keyCode: 125, flags: .maskAlternate) == .down,
+            "Option-Down scrolls down"
         )
         check(
             OverlayShortcutPolicy.scrollDirection(keyCode: 125, flags: []) == nil,
@@ -156,7 +156,7 @@ enum CoreSelfTests {
         check(
             OverlayShortcutPolicy.scrollDirection(
                 keyCode: 125,
-                flags: [.maskControl, .maskCommand]
+                flags: [.maskAlternate, .maskCommand]
             ) == nil,
             "extra Command modifier rejects scroll shortcut"
         )

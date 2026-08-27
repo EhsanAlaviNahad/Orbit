@@ -36,7 +36,7 @@ Always grant permissions to the installed copy at `~/Applications/Eclick.app`. B
 1. Focus the window containing the control.
 2. Press **Command-E**.
 3. Type part of the control name. Search ignores case, accents, and punctuation; for example, `settings` or `set-` matches “Settings.”
-4. Press Enter to click the highlighted element or run the highlighted window command. Option-Enter double-clicks elements; Shift-Enter right-clicks them. Use Tab, Shift-Tab, Up, or Down to select another match. Control-Up and Control-Down gently scroll the focused page or app while hints remain open.
+4. Press Enter to click the highlighted element or run the highlighted window command. Option-Enter double-clicks elements; Shift-Enter right-clicks them. Use Tab, Shift-Tab, Up, or Down to select another match. Option-Up and Option-Down gently scroll the focused page or app while hints remain open.
 5. Every target keeps a visible home-row hint. Type either an element name or its hint, then press Enter. No modifier key is needed.
 6. Press Escape or Command-E again to cancel. Backspace edits the unified search.
 
@@ -48,10 +48,10 @@ Always grant permissions to the installed copy at `~/Applications/Eclick.app`. B
 | Option-Enter | Double-click the selected target |
 | Shift-Enter | Right-click the selected target |
 | Tab / Shift-Tab / Up / Down | Select the next / previous match |
-| Control-Up / Control-Down | Scroll the focused app while hints stay open |
+| Option-Up / Option-Down | Scroll the focused app while hints stay open |
 | Escape / Command-E | Cancel hint mode |
 
-Control-Arrow scrolling uses a small wheel event at the center of the active window; it has no settings slider.
+Option-Arrow scrolling uses a small wheel event at the center of the active window; it has no settings slider.
 
 Accessibility controls use their semantic action when possible. Other targets receive a left click at their center, which moves the pointer. OCR text is only added where it does not overlap an Accessibility target; some detected text may not actually be clickable.
 
@@ -73,7 +73,7 @@ The installed command-line toolchain does not include a usable XCTest runtime, s
 ./Scripts/test-core.sh
 ```
 
-The tests cover home-row code boundaries, prefix safety, search normalization and ranking, Control-Arrow scroll classification and wheel-event construction, exact system-command parsing and confirmation, mock-only system execution, hint color validation and contrast selection, geometry validation, Accessibility/OCR merging, and window arrangement geometry.
+The tests cover home-row code boundaries, prefix safety, search normalization and ranking, Option-Arrow scroll classification and wheel-event construction, exact system-command parsing and confirmation, mock-only system execution, hint color validation and contrast selection, geometry validation, Accessibility/OCR merging, and window arrangement geometry.
 
 ## Update or uninstall
 

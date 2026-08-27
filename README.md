@@ -1,6 +1,18 @@
 # Eclick
 
+<p align="center">
+  <img src="Resources/Brand/eclick-saturn.svg" width="132" alt="Eclick Saturn logo">
+</p>
+
 Eclick is a local macOS menu bar utility for clicking visible controls without leaving the keyboard. Press **Command-E**, then search by element name or visible home-row hint and press Enter.
+
+## Highlights
+
+- Search visible controls by name or hint code, then click, double-click, or right-click without reaching for the mouse.
+- Arrange the focused window through its native macOS Window menu, with Accessibility resizing as a fallback.
+- Scroll the focused app while hints stay open, with a persisted speed control from 0.5× to 3×.
+- Use optional on-device Vision OCR when Accessibility data is sparse or incomplete. Eclick does not send screen content or usage data off your Mac.
+- Run exact `restart`, `shutdown`, and `sleep` commands only after an explicit two-Enter confirmation.
 
 Eclick scans only the focused window. It uses macOS Accessibility for native controls and optionally fills sparse or incomplete scans with on-device Vision OCR. No data leaves the Mac.
 
@@ -59,9 +71,9 @@ Visible Dock items also receive hints. Activating one uses its Accessibility act
 
 Window arrangement lives in the same search box. Search for `left`, `right`, `top`, `bottom`, `center`, `fill`, `maximize`, or `full screen`, then press Enter. Eclick invokes the matching macOS Window menu command when available, preserving system tiling gaps, Stage Manager behavior, the menu bar, and the Dock; direct Accessibility resizing remains a fallback.
 
-Exact system commands are also available: `restart`, `shutdown`, and `sleep`. Matching ignores surrounding whitespace and letter case but never uses fuzzy search, so text such as `restart now` remains an ordinary search. Each command requires two complete Enter presses. Restart and shutdown then open the native macOS confirmation dialog; changing the query, pressing Escape, or closing the overlay cancels Eclick's pending confirmation.
+Exact system commands are also available: `restart`, `shutdown`, and `sleep`. Matching ignores surrounding whitespace and letter case but never uses fuzzy search, so text such as `restart now` remains an ordinary search. Each command requires two complete plain Enter presses; changing the query, pressing Escape, closing the overlay, or changing modifiers cancels the pending confirmation. Restart and shutdown then show macOS's native confirmation dialog.
 
-The Settings window can change the global shortcut, Eclick scroll speed, hint-label size and color, show permission status, and enable launch at login. Scroll speed and hint-label choices persist across launches. Hint labels include built-in appearances plus a persistent custom color with automatic readable text. A shortcut must contain Command, Control, or Option. If another utility already owns it, Eclick keeps the previous working shortcut.
+The Settings window can change the global shortcut, scroll speed, hint-label size and color, show permission status, and enable launch at login. Scroll speed and hint-label choices persist across launches. Hint labels include built-in appearances plus a persistent custom color with automatic readable text. A shortcut must contain Command, Control, or Option. If another utility already owns it, Eclick keeps the previous working shortcut.
 
 Search reads direct keyboard events so the overlay can remain non-activating. Standard keyboard layouts work; IME and dead-key composition are not supported in the search overlay.
 

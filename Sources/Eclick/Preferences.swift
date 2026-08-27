@@ -33,6 +33,7 @@ final class PreferencesModel: ObservableObject {
     @Published private(set) var launchAtLoginRequiresApproval = false
     @Published var isRecordingShortcut = false
     @Published var message: String?
+    @Published private(set) var scrollSpeedMultiplier: Double
     @Published private(set) var hintLabelSize: Double
     @Published private(set) var hintLabelAppearance: HintLabelAppearance
     @Published private(set) var hintLabelCustomColor: HintColorComponents
@@ -51,6 +52,11 @@ final class PreferencesModel: ObservableObject {
         }
 
         self.defaults = defaults
+        if let storedScrollSpeed = defaults.object(forKey: "scroll.speedMultiplier") as? NSNumber {
+            scrollSpeedMultiplier = ScrollSpeedMetrics.normalizedMultiplier(storedScrollSpeed.doubleValue)
+        } else {
+            scrollSpeedMultiplier = ScrollSpeedMetrics.defaultMultiplier
+        }
         hintLabelSize = defaults.object(forKey: "hints.fontSize") == nil
             ? HintLabelMetrics.defaultFontSize
             : HintLabelMetrics.clampedFontSize(defaults.double(forKey: "hints.fontSize"))
@@ -125,6 +131,11 @@ final class PreferencesModel: ObservableObject {
         hintLabelSize = HintLabelMetrics.clampedFontSize(size)
         defaults.set(hintLabelSize, forKey: "hints.fontSize")
         notifyHintStyleChange()
+    }
+
+    func setScrollSpeedMultiplier(_ multiplier: Double) {
+        scrollSpeedMultiplier = ScrollSpeedMetrics.normalizedMultiplier(multiplier)
+        defaults.set(scrollSpeedMultiplier, forKey: "scroll.speedMultiplier")
     }
 
     func setHintLabelAppearance(_ appearance: HintLabelAppearance) {
@@ -293,6 +304,36 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Scrolling") {
+                LabeledContent("Speed") {
+                    Text("Slow")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Slider(
+                        value: Binding(
+                            get: { model.scrollSpeedMultiplier },
+                            set: model.setScrollSpeedMultiplier
+                        ),
+                        in: ScrollSpeedMetrics.minimumMultiplier...ScrollSpeedMetrics.maximumMultiplier,
+                        step: ScrollSpeedMetrics.step
+                    )
+                    .frame(width: 140)
+                    .accessibilityLabel("Eclick scroll speed")
+                    .accessibilityValue("\(formattedScrollSpeed) times")
+                    .accessibilityHint("Adjusts how far Option-Up and Option-Down scroll")
+                    Text("Fast")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Text("\(formattedScrollSpeed)\u{00d7}")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 42, alignment: .trailing)
+                        .accessibilityHidden(true)
+                }
+            }
+
             Section("Hint Labels") {
                 LabeledContent("Size") {
                     Slider(
@@ -368,6 +409,12 @@ struct SettingsView: View {
         .padding()
         .frame(minWidth: 500, idealWidth: 520, minHeight: 500, idealHeight: 540)
         .onAppear { model.refresh() }
+    }
+
+    private var formattedScrollSpeed: String {
+        model.scrollSpeedMultiplier.formatted(
+            .number.precision(.fractionLength(0...2))
+        )
     }
 
     @ViewBuilder

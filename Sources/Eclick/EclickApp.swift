@@ -450,10 +450,14 @@ final class AppController: NSObject {
             systemCommands.cancel()
             overlay.setPendingSystemCommand(nil)
             guard let activeTargetPID, let activeWindowFrame else { return }
-            PageScroller.scroll(direction, at: CGPoint(
-                x: activeWindowFrame.midX,
-                y: activeWindowFrame.midY
-            ))
+            PageScroller.scroll(
+                direction,
+                at: CGPoint(
+                    x: activeWindowFrame.midX,
+                    y: activeWindowFrame.midY
+                ),
+                speedMultiplier: preferences.scrollSpeedMultiplier
+            )
             overlay.showOnlyDockHints()
             scheduleHintRefresh(pid: activeTargetPID)
         case .nextResult:

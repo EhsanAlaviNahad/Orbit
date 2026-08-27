@@ -51,7 +51,7 @@ Always grant permissions to the installed copy at `~/Applications/Eclick.app`. B
 | Option-Up / Option-Down | Scroll the focused app while hints stay open |
 | Escape / Command-E | Cancel hint mode |
 
-Option-Arrow scrolling uses a small wheel event at the center of the active window; it has no settings slider.
+Option-Arrow scrolling uses a wheel event at the center of the active window. Adjust its distance per keypress from 0.5× to 3× with the Scroll Speed slider in Eclick Settings; 1× preserves the default behavior.
 
 Accessibility controls use their semantic action when possible. Other targets receive a left click at their center, which moves the pointer. OCR text is only added where it does not overlap an Accessibility target; some detected text may not actually be clickable.
 
@@ -61,7 +61,7 @@ Window arrangement lives in the same search box. Search for `left`, `right`, `to
 
 Exact system commands are also available: `restart`, `shutdown`, and `sleep`. Matching ignores surrounding whitespace and letter case but never uses fuzzy search, so text such as `restart now` remains an ordinary search. Each command requires two complete Enter presses. Restart and shutdown then open the native macOS confirmation dialog; changing the query, pressing Escape, or closing the overlay cancels Eclick's pending confirmation.
 
-The Settings window can change the global shortcut, hint-label size and color, show permission status, and enable launch at login. Hint labels include built-in appearances plus a persistent custom color with automatic readable text. A shortcut must contain Command, Control, or Option. If another utility already owns it, Eclick keeps the previous working shortcut.
+The Settings window can change the global shortcut, Eclick scroll speed, hint-label size and color, show permission status, and enable launch at login. Scroll speed and hint-label choices persist across launches. Hint labels include built-in appearances plus a persistent custom color with automatic readable text. A shortcut must contain Command, Control, or Option. If another utility already owns it, Eclick keeps the previous working shortcut.
 
 Search reads direct keyboard events so the overlay can remain non-activating. Standard keyboard layouts work; IME and dead-key composition are not supported in the search overlay.
 
@@ -73,7 +73,7 @@ The installed command-line toolchain does not include a usable XCTest runtime, s
 ./Scripts/test-core.sh
 ```
 
-The tests cover home-row code boundaries, prefix safety, search normalization and ranking, Option-Arrow scroll classification and wheel-event construction, exact system-command parsing and confirmation, mock-only system execution, hint color validation and contrast selection, geometry validation, Accessibility/OCR merging, and window arrangement geometry.
+The tests cover home-row code boundaries, prefix safety, search normalization and ranking, Option-Arrow scroll classification, speed normalization, and wheel-event construction, exact system-command parsing and confirmation, mock-only system execution, hint color validation and contrast selection, geometry validation, Accessibility/OCR merging, and window arrangement geometry.
 
 ## Update or uninstall
 

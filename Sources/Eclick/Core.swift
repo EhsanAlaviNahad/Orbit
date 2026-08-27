@@ -173,6 +173,23 @@ enum HintLabelMetrics {
     }
 }
 
+enum ScrollSpeedMetrics {
+    static let defaultMultiplier = 1.0
+    static let minimumMultiplier = 0.5
+    static let maximumMultiplier = 3.0
+    static let step = 0.25
+    static let basePixelDistance: Int32 = 36
+
+    static func normalizedMultiplier(_ multiplier: Double) -> Double {
+        guard multiplier.isFinite else { return defaultMultiplier }
+        return min(maximumMultiplier, max(minimumMultiplier, multiplier))
+    }
+
+    static func pixelDistance(for multiplier: Double) -> Int32 {
+        Int32((Double(basePixelDistance) * normalizedMultiplier(multiplier)).rounded())
+    }
+}
+
 enum OverlayShortcutPolicy {
     static func scrollDirection(keyCode: UInt16, flags: CGEventFlags) -> ScrollDirection? {
         guard flags.contains(.maskAlternate) else { return nil }

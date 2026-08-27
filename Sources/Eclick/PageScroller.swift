@@ -1,14 +1,25 @@
 import CoreGraphics
 
 enum PageScroller {
-    private static let pixelDistance: Int32 = 36
-
-    static func scroll(_ direction: ScrollDirection, at location: CGPoint) {
-        guard let event = makeEvent(direction, at: location) else { return }
+    static func scroll(
+        _ direction: ScrollDirection,
+        at location: CGPoint,
+        speedMultiplier: Double
+    ) {
+        guard let event = makeEvent(
+            direction,
+            at: location,
+            speedMultiplier: speedMultiplier
+        ) else { return }
         event.post(tap: .cghidEventTap)
     }
 
-    static func makeEvent(_ direction: ScrollDirection, at location: CGPoint) -> CGEvent? {
+    static func makeEvent(
+        _ direction: ScrollDirection,
+        at location: CGPoint,
+        speedMultiplier: Double
+    ) -> CGEvent? {
+        let pixelDistance = ScrollSpeedMetrics.pixelDistance(for: speedMultiplier)
         let delta = direction == .up ? pixelDistance : -pixelDistance
         guard let event = CGEvent(
             scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState),

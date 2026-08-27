@@ -161,7 +161,11 @@ enum CoreSelfTests {
             "extra Command modifier rejects scroll shortcut"
         )
         let scrollLocation = CGPoint(x: 320, y: 240)
-        let scrollDownEvent = PageScroller.makeEvent(.down, at: scrollLocation)
+        let scrollDownEvent = PageScroller.makeEvent(
+            .down,
+            at: scrollLocation,
+            speedMultiplier: ScrollSpeedMetrics.defaultMultiplier
+        )
         check(
             scrollDownEvent?.type == .scrollWheel,
             "scroll-down sends a wheel event"
@@ -171,13 +175,34 @@ enum CoreSelfTests {
             "scroll-down uses a gentle negative pixel delta"
         )
         check(
-            PageScroller.makeEvent(.up, at: scrollLocation)?
+            PageScroller.makeEvent(
+                .up,
+                at: scrollLocation,
+                speedMultiplier: ScrollSpeedMetrics.defaultMultiplier
+            )?
                 .getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == 36,
             "scroll-up uses a gentle positive pixel delta"
         )
         check(
             scrollDownEvent?.location == scrollLocation,
             "wheel event targets the active window center"
+        )
+        check(ScrollSpeedMetrics.pixelDistance(for: 0.5) == 18, "half scroll speed uses 18 pixels")
+        check(ScrollSpeedMetrics.pixelDistance(for: 1) == 36, "default scroll speed uses 36 pixels")
+        check(ScrollSpeedMetrics.pixelDistance(for: 3) == 108, "maximum scroll speed uses 108 pixels")
+        check(ScrollSpeedMetrics.normalizedMultiplier(0.25) == 0.5, "scroll speed clamps low values")
+        check(ScrollSpeedMetrics.normalizedMultiplier(4) == 3, "scroll speed clamps high values")
+        check(ScrollSpeedMetrics.normalizedMultiplier(.nan) == 1, "invalid scroll speed uses default")
+        check(ScrollSpeedMetrics.normalizedMultiplier(.infinity) == 1, "infinite scroll speed uses default")
+        check(
+            PageScroller.makeEvent(.up, at: scrollLocation, speedMultiplier: 3)?
+                .getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == 108,
+            "scroll-up applies the selected speed"
+        )
+        check(
+            PageScroller.makeEvent(.down, at: scrollLocation, speedMultiplier: 3)?
+                .getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == -108,
+            "scroll directions remain symmetric at the selected speed"
         )
         check(HintColorComponents(red: 0.2, green: 0.3, blue: 0.4) != nil, "valid custom color accepted")
         check(HintColorComponents(red: .nan, green: 0.3, blue: 0.4) == nil, "invalid custom color rejected")

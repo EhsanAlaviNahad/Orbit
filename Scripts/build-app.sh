@@ -9,6 +9,7 @@ BUILD_ROOT="$REPO_ROOT/.build"
 SWIFT_BUILD_ROOT="$BUILD_ROOT/swiftpm"
 APP_BUNDLE="$BUILD_ROOT/$APP_NAME.app"
 INFO_PLIST="$REPO_ROOT/Resources/Info.plist"
+APP_ICON="$REPO_ROOT/Resources/Orbit.icns"
 export SWIFTPM_MODULECACHE_OVERRIDE="$BUILD_ROOT/module-cache"
 export CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/clang-module-cache"
 
@@ -40,6 +41,11 @@ if [[ ! -f "$INFO_PLIST" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$APP_ICON" ]]; then
+  echo "App icon not found: $APP_ICON" >&2
+  exit 1
+fi
+
 EXPECTED_BUNDLE="$REPO_ROOT/.build/Orbit.app"
 if [[ "$APP_BUNDLE" != "$EXPECTED_BUNDLE" ]]; then
   echo "Refusing to replace unexpected bundle path: $APP_BUNDLE" >&2
@@ -47,9 +53,10 @@ if [[ "$APP_BUNDLE" != "$EXPECTED_BUNDLE" ]]; then
 fi
 
 rm -rf -- "$APP_BUNDLE"
-mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$EXECUTABLE" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
+cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/Orbit.icns"
 chmod 755 "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 codesign \

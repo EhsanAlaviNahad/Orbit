@@ -19,6 +19,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller = AppController()
+        if !launchedAsLoginItem {
+            controller?.showSettings()
+        }
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        controller?.showSettings()
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -27,6 +38,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         controller?.refreshPreferences()
+    }
+
+    private var launchedAsLoginItem: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventID == kAEOpenApplication else {
+            return false
+        }
+        return event.paramDescriptor(forKeyword: keyAELaunchedAsLogInItem) != nil
     }
 }
 
@@ -148,7 +167,7 @@ final class AppController: NSObject {
         toggleHintMode()
     }
 
-    @objc private func showSettings() {
+    @objc func showSettings() {
         preferences.refresh()
         if let settingsWindow {
             NSApp.activate(ignoringOtherApps: true)
@@ -200,12 +219,12 @@ final class AppController: NSObject {
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            ?? "0.4.0"
+            ?? "0.4.1"
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: "Orbit",
             .applicationVersion: version,
             .credits: NSAttributedString(
-                string: "Keyboard-driven search and clicking with Accessibility and on-device OCR."
+                string: "Created by Ehsan AlaviNahad\n\nKeyboard-driven search and clicking with Accessibility and on-device OCR."
             )
         ])
     }

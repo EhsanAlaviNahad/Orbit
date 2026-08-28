@@ -10,7 +10,7 @@ enum ScanError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .accessibilityUnavailable:
-            return "Accessibility permission is required before Eclick can scan controls."
+            return "Accessibility permission is required before Orbit can scan controls."
         case .noFocusedWindow:
             return "No focused window was found."
         }

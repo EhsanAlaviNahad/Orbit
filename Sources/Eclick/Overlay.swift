@@ -985,7 +985,7 @@ private final class SearchHUDView: NSGlassEffectView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Eclick search")
+        setAccessibilityLabel("Orbit search")
 
         icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search")
         icon.contentTintColor = .secondaryLabelColor

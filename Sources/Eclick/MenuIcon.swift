@@ -2,13 +2,13 @@ import AppKit
 
 enum MenuIcon {
     static func makeIdleIcon() -> NSImage {
-        templateImage(accessibilityDescription: "Eclick") { context in
+        templateImage(accessibilityDescription: "Orbit") { context in
             drawSaturn(in: context)
         }
     }
 
     static func makeScanningIcon() -> NSImage {
-        templateImage(accessibilityDescription: "Eclick is scanning") { context in
+        templateImage(accessibilityDescription: "Orbit is scanning") { context in
             drawViewfinder(in: context)
         }
     }

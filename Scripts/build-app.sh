@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_NAME="Eclick"
+APP_NAME="Orbit"
 BUILD_ROOT="$REPO_ROOT/.build"
 SWIFT_BUILD_ROOT="$BUILD_ROOT/swiftpm"
 APP_BUNDLE="$BUILD_ROOT/$APP_NAME.app"
@@ -40,7 +40,7 @@ if [[ ! -f "$INFO_PLIST" ]]; then
   exit 1
 fi
 
-EXPECTED_BUNDLE="$REPO_ROOT/.build/Eclick.app"
+EXPECTED_BUNDLE="$REPO_ROOT/.build/Orbit.app"
 if [[ "$APP_BUNDLE" != "$EXPECTED_BUNDLE" ]]; then
   echo "Refusing to replace unexpected bundle path: $APP_BUNDLE" >&2
   exit 1

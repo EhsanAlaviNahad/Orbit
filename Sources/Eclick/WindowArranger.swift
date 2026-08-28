@@ -12,13 +12,13 @@ enum WindowArrangementError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .accessibilityUnavailable:
-            "Accessibility permission is required before Eclick can arrange windows."
+            "Accessibility permission is required before Orbit can arrange windows."
         case .noFocusedWindow:
             "No focused window was found to arrange."
         case .noScreen:
             "No display was found for the focused window."
         case .operationFailed:
-            "The focused app did not allow Eclick to move or resize its window."
+            "The focused app did not allow Orbit to move or resize its window."
         case .fullScreenUnavailable:
             "The focused app does not support macOS full screen through Accessibility."
         case .fullScreenExitFailed:

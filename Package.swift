@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Eclick",
+    name: "Orbit",
     platforms: [
         .macOS("27.0")
     ],
     products: [
-        .executable(name: "Eclick", targets: ["Eclick"])
+        .executable(name: "Orbit", targets: ["Eclick"])
     ],
     targets: [
         .executableTarget(

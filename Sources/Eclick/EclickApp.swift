@@ -158,7 +158,7 @@ final class AppController: NSObject {
 
         let controller = NSHostingController(rootView: SettingsView(model: preferences))
         let window = NSWindow(contentViewController: controller)
-        window.title = "Eclick Settings"
+        window.title = "Orbit Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 520, height: 540))
         window.contentMinSize = NSSize(width: 500, height: 500)
@@ -200,9 +200,9 @@ final class AppController: NSObject {
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            ?? "0.3.0"
+            ?? "0.4.0"
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "Eclick",
+            .applicationName: "Orbit",
             .applicationVersion: version,
             .credits: NSAttributedString(
                 string: "Keyboard-driven search and clicking with Accessibility and on-device OCR."
@@ -213,7 +213,7 @@ final class AppController: NSObject {
     private func configureStatusItem() {
         if let button = statusItem.button {
             button.image = MenuIcon.makeIdleIcon()
-            button.toolTip = "Eclick — keyboard hints for clickable controls"
+            button.toolTip = "Orbit — keyboard hints for clickable controls"
         }
 
         let menu = NSMenu()
@@ -236,7 +236,7 @@ final class AppController: NSObject {
         menu.addItem(settings)
 
         let about = NSMenuItem(
-            title: "About Eclick",
+            title: "About Orbit",
             action: #selector(showAbout),
             keyEquivalent: ""
         )
@@ -245,7 +245,7 @@ final class AppController: NSObject {
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
-            title: "Quit Eclick",
+            title: "Quit Orbit",
             action: #selector(quit),
             keyEquivalent: "q"
         )
@@ -276,7 +276,7 @@ final class AppController: NSObject {
         }
         guard PermissionCenter.accessibilityGranted else {
             preferences.refresh()
-            preferences.message = "Remove any old Eclick entry in Accessibility, add the installed Eclick.app, enable it, then relaunch Eclick."
+            preferences.message = "Remove any old Orbit entry in Accessibility, add the installed Orbit.app, enable it, then relaunch Orbit."
             showSettings()
             return
         }

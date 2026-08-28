@@ -267,7 +267,7 @@ struct SettingsView: View {
                     .keyboardShortcut(.defaultAction)
                     .accessibilityLabel("Activation shortcut")
                     .accessibilityValue(model.isRecordingShortcut ? "Recording" : model.shortcut.displayName)
-                    .accessibilityHint("Change the shortcut used to show Eclick")
+                    .accessibilityHint("Change the shortcut used to show Orbit")
                 }
             }
 
@@ -319,7 +319,7 @@ struct SettingsView: View {
                         step: ScrollSpeedMetrics.step
                     )
                     .frame(width: 140)
-                    .accessibilityLabel("Eclick scroll speed")
+                    .accessibilityLabel("Orbit scroll speed")
                     .accessibilityValue("\(formattedScrollSpeed) times")
                     .accessibilityHint("Adjusts how far Option-Up and Option-Down scroll")
                     Text("Fast")

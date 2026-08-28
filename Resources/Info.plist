@@ -5,25 +5,25 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Eclick</string>
+    <string>Orbit</string>
     <key>CFBundleExecutable</key>
-    <string>Eclick</string>
+    <string>Orbit</string>
     <key>CFBundleIdentifier</key>
     <string>com.ehsanalavinahad.eclick</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Eclick</string>
+    <string>Orbit</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.4</string>
+	<string>0.4.0</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>MacOSX</string>
     </array>
     <key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>LSArchitecturePriority</key>
@@ -35,7 +35,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Eclick sends a local system event only after you confirm a restart or shutdown command.</string>
+	<string>Orbit sends a local system event only after you confirm a restart or shutdown command.</string>
 	<key>EclickSigningMarker</key>
 	<string>F14A184E-BC4A-4E78-AE83-EC617B748E54</string>
     <key>NSHighResolutionCapable</key>

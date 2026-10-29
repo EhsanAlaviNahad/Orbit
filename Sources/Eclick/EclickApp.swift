@@ -19,17 +19,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller = AppController()
-        if !launchedAsLoginItem {
-            controller?.showSettings()
-        }
-    }
-
-    func applicationShouldHandleReopen(
-        _ sender: NSApplication,
-        hasVisibleWindows flag: Bool
-    ) -> Bool {
-        controller?.showSettings()
-        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -38,14 +27,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         controller?.refreshPreferences()
-    }
-
-    private var launchedAsLoginItem: Bool {
-        guard let event = NSAppleEventManager.shared().currentAppleEvent,
-              event.eventID == kAEOpenApplication else {
-            return false
-        }
-        return event.paramDescriptor(forKeyword: keyAELaunchedAsLogInItem) != nil
     }
 }
 
@@ -182,6 +163,8 @@ final class AppController: NSObject {
         window.setContentSize(NSSize(width: 520, height: 540))
         window.contentMinSize = NSSize(width: 500, height: 500)
         window.isReleasedWhenClosed = false
+        // Keep login/session restore from re-presenting Settings after a restart.
+        window.isRestorable = false
         window.center()
         settingsWindow = window
         NSApp.activate(ignoringOtherApps: true)

@@ -63,7 +63,7 @@ enum WindowArranger {
     ) throws {
         let application = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(application, 0.40)
-        enableEnhancedAccessibility(for: application)
+        AccessibilityModeLease.enable(application: application, pid: pid)
         guard let window = focusedWindow(for: application) else {
             throw WindowArrangementError.noFocusedWindow
         }
@@ -252,16 +252,6 @@ enum WindowArranger {
             usleep(50_000)
         }
         throw WindowArrangementError.fullScreenExitFailed
-    }
-
-    private static func enableEnhancedAccessibility(for application: AXUIElement) {
-        for attributeName in ["AXManualAccessibility", "AXEnhancedUserInterface"] {
-            _ = AXUIElementSetAttributeValue(
-                application,
-                attributeName as CFString,
-                kCFBooleanTrue
-            )
-        }
     }
 
     private static func focusedWindow(for application: AXUIElement) -> AXUIElement? {

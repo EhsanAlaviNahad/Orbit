@@ -108,6 +108,7 @@ final class AppController: NSObject {
 
     func shutdown() {
         cancelHintMode()
+        AccessibilityModeLease.releaseAll()
         input.shutdown()
         arrangementTask?.cancel()
         arrangementTask = nil
@@ -353,12 +354,21 @@ final class AppController: NSObject {
                     targets: scan.accessibilityTargets,
                     isComplete: scan.accessibilityIsComplete
                 )
-                let resolvedDock = await dockTargets
-
+                // First paint follows the element tree alone; the dock walk runs
+                // on its own budget and would otherwise delay every hint.
                 if paintedFromCache {
-                    self.replacePresentedTargets(immediate, dockTargets: resolvedDock)
+                    self.replacePresentedTargets(immediate, dockTargets: [])
                 } else {
-                    self.present(immediate, dockTargets: resolvedDock, targetPID: targetPID)
+                    self.present(immediate, dockTargets: [], targetPID: targetPID)
+                }
+
+                let resolvedDock = await dockTargets
+                guard !Task.isCancelled, self.scanID == id, self.overlay.isPresented else {
+                    scan.cancelSupplement()
+                    return
+                }
+                if !resolvedDock.isEmpty {
+                    self.replacePresentedTargets(immediate, dockTargets: resolvedDock)
                 }
 
                 let mergedTargets = await withTaskCancellationHandler {
@@ -623,8 +633,10 @@ final class AppController: NSObject {
         activeWindowFrame = result.windowFrame
         activatedDuringSession = false
         lastPresentation = (result, dockTargets)
+        AccessibilityModeLease.beginSession(pid: targetPID)
         guard input.start() else {
             overlay.dismiss()
+            AccessibilityModeLease.endSession(pid: targetPID)
             preferences.message = "Keyboard monitoring could not start. Recheck Accessibility permission."
             showSettings()
             return
@@ -661,6 +673,9 @@ final class AppController: NSObject {
             overlay.dismiss()
         } else {
             overlay.hide()
+        }
+        if let sessionPID = activeTargetPID {
+            AccessibilityModeLease.endSession(pid: sessionPID)
         }
         activeTargetPID = nil
         activeWindowFrame = nil

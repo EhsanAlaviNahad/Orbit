@@ -40,7 +40,11 @@ struct FocusedWindowScan {
 }
 
 final class TargetScanner: Sendable {
-    private static let ocrFallbackTargetThreshold = 48
+    /// A window whose tree was fully read exposes every control it has; OCR can
+    /// only re-find the same controls, so it runs just for partial or empty trees.
+    private static func needsOCR(_ scan: AccessibilityScan) -> Bool {
+        !scan.isComplete || scan.targets.isEmpty
+    }
 
     private struct WindowContext: @unchecked Sendable {
         let pid: pid_t
@@ -65,6 +69,7 @@ final class TargetScanner: Sendable {
     private struct AccessibilityScan {
         let targets: [ClickTarget]
         let isComplete: Bool
+        let nodes: Int
     }
 
     private enum TraversalOrder: Equatable {
@@ -96,32 +101,24 @@ final class TargetScanner: Sendable {
                 skipWarmRetry: Self.recentlyWarmedTree(pid: pid, frame: context.frame)
             )
         }
-        // The screenshot pipeline (shareable-content lookup, window matching,
-        // capture) is slow and does not depend on accessibility results, so it
-        // overlaps the AX traversal instead of running after it.
-        let captureTask = Task.detached(priority: .userInitiated) { () -> CapturedWindow? in
-            guard PermissionCenter.screenRecordingGranted else { return nil }
-            return await Self.captureFocusedWindowImage(in: context)
-        }
         return try await withTaskCancellationHandler {
             let accessibilityScan = await accessibilityTask.value
             Self.recordAccessibilityScanCompletion(pid: context.pid, frame: context.frame)
             try Task.checkCancellation()
+            // Capturing costs 60-150ms of ScreenCaptureKit work, so it starts
+            // only once the accessibility result shows that OCR is needed.
             let mergedTargetsTask = Task.detached(priority: .userInitiated) { () -> [ClickTarget] in
                 let ocrEligible = PermissionCenter.screenRecordingGranted
-                    && (!accessibilityScan.isComplete
-                        || accessibilityScan.targets.count < Self.ocrFallbackTargetThreshold)
-                let ocrTargets: [ClickTarget]
-                if ocrEligible {
-                    ocrTargets = await Self.recognizeOCRTargets(
-                        captureTask: captureTask,
-                        in: context,
-                        accurate: accessibilityScan.targets.isEmpty
-                    )
-                } else {
-                    captureTask.cancel()
-                    ocrTargets = []
+                    && Self.needsOCR(accessibilityScan)
+                guard ocrEligible,
+                      let capture = await Self.captureFocusedWindowImage(in: context) else {
+                    return accessibilityScan.targets
                 }
+                let ocrTargets = await Self.recognizeOCRTargets(
+                    capture: capture,
+                    in: context,
+                    accurate: accessibilityScan.targets.isEmpty
+                )
                 if Task.isCancelled {
                     return accessibilityScan.targets
                 }
@@ -138,7 +135,6 @@ final class TargetScanner: Sendable {
             )
         } onCancel: {
             accessibilityTask.cancel()
-            captureTask.cancel()
         }
     }
 
@@ -256,9 +252,10 @@ final class TargetScanner: Sendable {
     private static func focusedWindow(pid: pid_t) -> WindowContext? {
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, 0.40)
-        let manuallyEnabled = enableEnhancedAccessibility(for: appElement)
+        let exposesManualAccessibility = AccessibilityModeLease.enable(application: appElement, pid: pid)
         let bundleIdentifier = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-        let needsWarmRetry = manuallyEnabled || warmRetryBundleIdentifiers.contains(bundleIdentifier)
+        let needsWarmRetry = exposesManualAccessibility
+            || warmRetryBundleIdentifiers.contains(bundleIdentifier)
 
         for attempt in 0..<3 {
             if let window = focusedWindowElement(for: appElement),
@@ -300,28 +297,17 @@ final class TargetScanner: Sendable {
         return windows.first(where: { elementFrame($0).map(TargetGeometry.isUsable) == true })
     }
 
-    private static func enableEnhancedAccessibility(for application: AXUIElement) -> Bool {
-        let manualStatus = AXUIElementSetAttributeValue(
-            application,
-            "AXManualAccessibility" as CFString,
-            kCFBooleanTrue
-        )
-        _ = AXUIElementSetAttributeValue(
-            application,
-            "AXEnhancedUserInterface" as CFString,
-            kCFBooleanTrue
-        )
-        return manualStatus == .success
-    }
-
     private static func resilientAccessibilityTargets(
         in context: WindowContext,
         skipWarmRetry: Bool
     ) -> AccessibilityScan {
         let first = accessibilityTargets(in: context, order: .depthFirst)
         guard !Task.isCancelled else { return first }
-        guard !skipWarmRetry,
-              context.needsWarmRetry || !first.isComplete || first.targets.count < 12 else {
+        // Only a partial read, or an app known to build its tree lazily that
+        // reported no controls at all, justifies a second full traversal.
+        let needsSecondPass = !first.isComplete
+            || (context.needsWarmRetry && first.targets.isEmpty && first.nodes >= coldTreeMinimumNodes)
+        guard !skipWarmRetry, needsSecondPass else {
             return first
         }
 
@@ -331,9 +317,12 @@ final class TargetScanner: Sendable {
         let second = accessibilityTargets(in: context, order: .breadthFirst)
         return AccessibilityScan(
             targets: TargetGeometry.deduplicated(first.targets + second.targets),
-            isComplete: second.isComplete
+            isComplete: second.isComplete,
+            nodes: second.nodes
         )
     }
+
+    private static let coldTreeMinimumNodes = 100
 
     private static func accessibilityTargets(
         in context: WindowContext,
@@ -346,6 +335,7 @@ final class TargetScanner: Sendable {
         var visited: [CFHashCode: [AXUIElement]] = [:]
         var enqueued: [CFHashCode: [AXUIElement]] = [:]
         var targets: [ClickTarget] = []
+        var visitedCount = 0
         var enqueuedCount = 1
         var hitNodeLimit = false
         var encounteredReadFailure = false
@@ -367,6 +357,7 @@ final class TargetScanner: Sendable {
             guard let element = nextElement else { break }
             AXUIElementSetMessagingTimeout(element, 0.15)
             guard insertIdentity(element, into: &visited) else { continue }
+            visitedCount += 1
 
             let snapshot = elementSnapshot(element, deadline: deadline)
             if !snapshot.isReliable { encounteredReadFailure = true }
@@ -439,7 +430,8 @@ final class TargetScanner: Sendable {
                 && !hitNodeLimit
                 && !encounteredReadFailure
                 && ContinuousClock.now < deadline
-                && !Task.isCancelled
+                && !Task.isCancelled,
+            nodes: visitedCount
         )
     }
 
@@ -471,22 +463,47 @@ final class TargetScanner: Sendable {
             )
         }
 
-        let children = values[0] as? [AXUIElement] ?? []
+        let childrenRead = batchChildren(values[0], from: element)
         let role = values[1] as? String ?? ""
         let position = axValue(values[4])
         let size = axValue(values[5])
         return ElementSnapshot(
-            children: children,
+            children: childrenRead.children,
             role: role,
             enabled: values[2] as? Bool ?? true,
             hidden: values[3] as? Bool ?? false,
             frame: frame(position: position, size: size),
             labelValues: values[6...11].compactMap { $0 as? String },
             value: values[12] as? String,
-            isReliable: !role.isEmpty
-                && (!alternateChildRelationshipRoles.contains(role)
-                    || values[0] is [AXUIElement])
+            isReliable: !role.isEmpty && childrenRead.isAuthoritative
         )
+    }
+
+    /// A successful batch read still reports per-attribute problems in place of
+    /// values, wrapped as an `AXValue` of `kAXValueTypeAXError`. For `AXChildren`
+    /// that wrapper normally means "this element has no children" (-25212), not a
+    /// failed read, so it must not mark the whole scan incomplete: doing so once
+    /// per tree forced a second full traversal plus an OCR pass on every
+    /// activation.
+    private static func batchChildren(
+        _ raw: Any,
+        from element: AXUIElement
+    ) -> (children: [AXUIElement], isAuthoritative: Bool) {
+        if let children = raw as? [AXUIElement] {
+            return (children, true)
+        }
+        if isAttributeErrorSentinel(raw) {
+            return ([], true)
+        }
+        let recheck: (value: [AXUIElement]?, transientFailure: Bool) =
+            attributeResult(kAXChildrenAttribute as String, from: element)
+        return (recheck.value ?? [], !recheck.transientFailure)
+    }
+
+    private static func isAttributeErrorSentinel(_ value: Any) -> Bool {
+        let object = value as CFTypeRef
+        guard CFGetTypeID(object) == AXValueGetTypeID() else { return false }
+        return AXValueGetType(unsafeDowncast(object, to: AXValue.self)) == .axError
     }
 
     private static func individualElementSnapshot(
@@ -617,15 +634,13 @@ final class TargetScanner: Sendable {
         return CapturedWindow(image: image, frame: window.frame)
     }
 
-    /// Fast recognition half of OCR: awaits the speculatively captured image,
-    /// then runs Vision text recognition over it.
+    /// Runs Vision text recognition over an already captured window image.
     private static func recognizeOCRTargets(
-        captureTask: Task<CapturedWindow?, Never>,
+        capture: CapturedWindow,
         in context: WindowContext,
         accurate: Bool
     ) async -> [ClickTarget] {
-        let capture = await captureTask.value
-        guard !Task.isCancelled, let capture else { return [] }
+        guard !Task.isCancelled else { return [] }
         let windowFrame = capture.frame
 
         let request = VNRecognizeTextRequest()

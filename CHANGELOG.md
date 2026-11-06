@@ -17,8 +17,10 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 ### Changed
 
 - The live demo page was rebuilt in Apple's design language: the system SF font stack, a translucent
-  sticky bar, scroll-triggered reveals that switch off under `prefers-reduced-motion`, and a copy
-  button beside the install command. Same words, same simulator, same 22-query verification.
+  sticky bar that now carries the maintainer's name beside the wordmark, scroll-triggered reveals
+  that switch off under `prefers-reduced-motion`, and a copy button beside the install command.
+  Nothing was removed from the audited copy, and the simulator and its 22-query verification are
+  unchanged.
 
 ### Fixed
 

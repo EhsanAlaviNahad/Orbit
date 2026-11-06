@@ -66,6 +66,8 @@
   .brand{display:inline-flex;align-items:center;gap:9px;color:var(--fg);
     font-weight:600;font-size:17px;letter-spacing:-.02em;text-decoration:none}
   .brand:hover{text-decoration:none;opacity:.85}
+  .brand-name{color:var(--dim);font-weight:400;font-size:15px;letter-spacing:-.01em;white-space:nowrap}
+  .brand-sep{color:var(--dim-2);font-weight:400;font-size:15px;margin-left:-3px}
   .mark{width:19px;height:19px;flex:none}
   .nav-links{display:flex;align-items:center;gap:26px;margin-left:auto}
   .nav-links a{color:rgba(245,245,247,.72);font-size:13px;letter-spacing:-.005em;
@@ -254,6 +256,10 @@
     .wrap{width:calc(100% - 36px)}
     .stats{grid-template-columns:1fr}
   }
+  @media (max-width:360px){
+    .nav-gh span{display:none}
+    .nav-gh{padding:6px 9px}
+  }
   @media (prefers-reduced-motion:reduce){
     html{scroll-behavior:auto}
     *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
@@ -267,12 +273,14 @@
 
 <nav class="nav" id="nav" aria-label="Primary">
   <div class="wrap nav-inner">
-    <a class="brand" href="#top">
+    <a class="brand" href="#top" aria-label="Orbit - Ehsan AlaviNahad">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
         <circle cx="16" cy="16" r="6" fill="#f5c518"/>
         <ellipse cx="16" cy="16" rx="14" ry="5" fill="none" stroke="#e8e8ea" stroke-width="2" transform="rotate(-24 16 16)"/>
       </svg>
       <span>Orbit</span>
+      <span class="brand-sep" aria-hidden="true">-</span>
+      <span class="brand-name">Ehsan AlaviNahad</span>
     </a>
     <div class="nav-links">
       <a href="#overview">Overview</a>

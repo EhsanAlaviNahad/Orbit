@@ -30,6 +30,9 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 - The live demo page listed six words for window arrangement while the README and `Core.swift` carry
   eight: `top` and `bottom`, which are real aliases for `Tile Window Top` and `Tile Window Bottom`,
   were missing from the page.
+- The privacy guarantee in SECURITY.md said the app writes nothing to disk but preferences. Enabling
+  "Launch at login" also registers a login item with macOS, so the guarantee now names that record
+  and states that it identifies the app rather than your windows.
 - Documentation corrections, none of which change the app: CI no longer described as running;
   contributing guide states the actual 4-space indentation and the real reason the tests avoid
   XCTest; window-arrangement, Dock, and scroll-step text matched to what the code does.

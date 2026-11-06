@@ -9,6 +9,8 @@ treating carefully, so this project takes security reports seriously.
 - Screen content, element names, and search text stay in memory on the Mac.
 - No telemetry, no analytics, no account, no network calls.
 - Nothing is written to disk except your own preferences under the app's bundle identifier.
+  Turning on "Launch at login" also registers a login item with macOS; that record names the app,
+  not your windows.
 
 A report that shows any of these guarantees being broken is treated as a vulnerability, even if the
 behaviour seems harmless.

@@ -83,9 +83,12 @@
   </div>
 
   <h2>Try the search here</h2>
-  <p class="lede">This is a simulator running in your browser, not Orbit itself: it uses the same
-    normalisation and hint-ranking rules as <code>Core.swift</code>, over a fixed list of TextEdit
-    controls. Orbit needs a real macOS window to scan.</p>
+  <p class="lede">This is a simulator running in your browser, not Orbit itself. Its search is a
+    line-by-line port of <code>TargetSearch</code> from <code>Core.swift</code> — same normalisation,
+    same five ranking tiers, same command aliases, and the same exact-only rule for the system
+    commands — verified against the Swift implementation across 22 queries. It searches a fixed list
+    of controls and commands, so the hint labels are illustrative rather than a live scan: Orbit
+    needs a real macOS window to read.</p>
   <div class="sim">
     <label for="q">Search controls</label>
     <input id="q" placeholder="try bold, cent, left, restart" autocomplete="off" spellcheck="false">
@@ -109,33 +112,67 @@
 </div>
 <script>
 const TARGETS=[
- {hint:"AD",name:"Bold text checkbox",kind:"control",action:"Click"},
- {hint:"AG",name:"Helvetica",kind:"control",action:"Click"},
- {hint:"AJ",name:"Regular",kind:"control",action:"Click"},
- {hint:"AK",name:"Align left",kind:"control",action:"Click"},
- {hint:"DA",name:"Align center",kind:"control",action:"Click"},
- {hint:"SH",name:"Align right",kind:"control",action:"Click"},
- {hint:"AL",name:"Bulleted list",kind:"control",action:"Click"},
- {hint:"SA",name:"Increase font size",kind:"control",action:"Click"},
- {hint:"DS",name:"Show document",kind:"control",action:"Click"},
- {hint:"DD",name:"Delete",kind:"control",action:"Click"},
- {hint:"—",name:"left",kind:"window",action:"Tile left"},
- {hint:"—",name:"right",kind:"window",action:"Tile right"},
- {hint:"—",name:"center",kind:"window",action:"Center window"},
- {hint:"—",name:"fill",kind:"window",action:"Fill screen"},
- {hint:"—",name:"restart",kind:"system",action:"Two Returns to confirm"},
- {hint:"—",name:"shutdown",kind:"system",action:"Two Returns to confirm"},
+ {hint:"AD",name:"Bold text checkbox",action:"Click"},
+ {hint:"AG",name:"Helvetica",action:"Click"},
+ {hint:"AJ",name:"Regular",action:"Click"},
+ {hint:"AK",name:"Align left",action:"Click"},
+ {hint:"DA",name:"Align center",action:"Click"},
+ {hint:"SH",name:"Align right",action:"Click"},
+ {hint:"AL",name:"Bulleted list",action:"Click"},
+ {hint:"SA",name:"Increase font size",action:"Click"},
+ {hint:"DS",name:"Show document",action:"Click"},
+ {hint:"DD",name:"Delete",action:"Click"},
+ {hint:"—",name:"Tile Window Left",aliases:["left","tile left","left half","window left","move window left"],arrangement:true,action:"Tile left"},
+ {hint:"—",name:"Tile Window Right",aliases:["right","tile right","right half","window right","move window right"],arrangement:true,action:"Tile right"},
+ {hint:"—",name:"Tile Window Top",aliases:["top","tile top","top half","window top","move window up"],arrangement:true,action:"Tile top"},
+ {hint:"—",name:"Tile Window Bottom",aliases:["bottom","tile bottom","bottom half","window bottom","move window down"],arrangement:true,action:"Tile bottom"},
+ {hint:"—",name:"Center Window",aliases:["center","centre","center window","centre window"],arrangement:true,action:"Center window"},
+ {hint:"—",name:"Fill Window",aliases:["fill","fill window","maximize","maximise","maximize window"],arrangement:true,action:"Fill screen"},
+ {hint:"—",name:"Full Screen",aliases:["fullscreen","full screen","enter fullscreen","enter full screen"],arrangement:true,action:"Full screen"},
 ];
-const norm=s=>s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9 ]/g,"").trim();
+// System commands are not search targets in Orbit: SystemCommandParser only accepts an
+// exact token, ignores surrounding whitespace and case, and never falls back to fuzzy search.
+const SYSTEM=[["restart","Restart Mac"],["shutdown","Shut Down Mac"],["sleep","Sleep Mac"]];
+const norm=s=>s.normalize("NFKC").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\p{P}/gu," ").split(/\s+/).filter(Boolean).join(" ");
+const fuzzy=(query,label)=>{const q=[...query],l=[...label];if(!q.length)return null;
+  let qi=0,first=0,prev=-1,gaps=0;
+  for(let li=0;li<l.length&&qi<q.length;li++){if(l[li]===q[qi]){if(qi===0)first=li;else gaps+=li-prev-1;prev=li;qi++}}
+  return qi===q.length?first*10000+gaps*100+l.length-q.length:null};
+const rank=(query,label)=>{const qc=[...query].length,lc=[...label].length;
+  if(label===query)return{rank:0,score:0};
+  if(label.startsWith(query))return{rank:1,score:lc-qc};
+  const w=label.split(" ").filter(Boolean),wi=w.findIndex(x=>x.startsWith(query));
+  if(wi>=0)return{rank:2,score:wi*1000+[...w[wi]].length-qc};
+  const at=label.indexOf(query);
+  if(at>=0)return{rank:3,score:at*1000+lc-qc};
+  const f=fuzzy(query,label);return f===null?null:{rank:4,score:f}};
+const bestRelevance=(query,terms)=>{let best=null;
+  for(const term of terms){if(!term)continue;
+    const candidate=rank(query,term);if(!candidate)continue;
+    if(best&&(best.rank<candidate.rank||(best.rank===candidate.rank&&best.score<=candidate.score)))continue;
+    best=candidate}
+  return best};
 const q=document.getElementById("q"),out=document.getElementById("out");
 function render(){
   const t=norm(q.value);
   if(!t){out.innerHTML='<div class="empty">Press ⌘E in a real app to see this over your own windows.</div>';return}
-  const hits=TARGETS.filter(x=>norm(x.name).includes(t)).slice(0,6);
+  const exact=SYSTEM.find(([token])=>token===t);
+  if(exact){out.innerHTML=`<div class="row sel"><span class="hint">—</span><span class="nm">${exact[1]}</span>
+    <span class="act">Press Return twice to confirm</span></div>
+    <div class="empty">Exact match only — “restrat” and “restart now” do nothing.</div>`;return}
+  const scored=[];
+  TARGETS.forEach((x,spatialIndex)=>{
+    const terms=[x.name,...(x.aliases||[])].map(norm);
+    const hit=bestRelevance(t,terms);if(!hit)return;
+    scored.push({x,rank:hit.rank,score:hit.score,arrangement:Boolean(x.arrangement),spatialIndex});
+  });
+  scored.sort((a,b)=>a.rank!==b.rank?a.rank-b.rank:a.score!==b.score?a.score-b.score
+    :a.arrangement!==b.arrangement?(a.arrangement?-1:1):a.spatialIndex-b.spatialIndex);
+  const hits=scored.slice(0,6);
   if(!hits.length){out.innerHTML='<div class="empty">No matches in this fixed sample.</div>';return}
-  out.innerHTML=hits.map((x,i)=>`<div class="row ${i===0?"sel":"hit"}">
-    <span class="hint">${x.hint}</span><span class="nm">${x.name}</span>
-    <span class="act">${x.action}</span></div>`).join("")+
+  out.innerHTML=hits.map((h,i)=>`<div class="row ${i===0?"sel":"hit"}">
+    <span class="hint">${h.x.hint}</span><span class="nm">${h.x.name}</span>
+    <span class="act">${h.x.action}</span></div>`).join("")+
     `<div class="empty">${hits.length} result${hits.length>1?"s":""} · Return clicks the first</div>`;
 }
 q.addEventListener("input",render);render();

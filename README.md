@@ -33,11 +33,13 @@ Orbit is a local macOS menu bar utility for clicking visible controls without le
 ## Live demo
 
 **[ehsanalavinahad.github.io/Orbit](https://ehsanalavinahad.github.io/Orbit/)** — includes a browser
-simulator of Orbit's real search and hint-ranking rules.
+simulator of Orbit's real search and ranking rules.
 
 Orbit drives native macOS windows through the Accessibility API, so the app itself cannot run in a
-browser. The simulator applies the same normalisation and ranking logic as `Core.swift` to a fixed
-control list; use it to get a feel for search, then install the app to point it at your own windows.
+browser. The simulator applies the same normalisation, ranking tiers, command aliases, and
+exact-match system-command rule as `TargetSearch` in `Core.swift` to a fixed control list, checked
+against the Swift implementation. Its hint labels are illustrative; use the simulator to get a feel
+for search, then install the app to point it at your own windows.
 
 ## Install
 

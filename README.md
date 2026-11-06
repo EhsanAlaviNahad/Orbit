@@ -120,9 +120,9 @@ Option-Arrow scrolling uses a wheel event at the center of the active window. Ad
 
 Accessibility controls use their semantic action when possible. Other targets receive a left click at their center, which moves the pointer. OCR text is only added where it does not overlap an Accessibility target; some detected text may not actually be clickable.
 
-Visible Dock items also receive hints. Activating one uses its Accessibility action to open or switch to the application.
+Visible Dock items also receive hints. A plain Enter activates one through its Accessibility action to open or switch to the application; Option-Enter and Shift-Enter post real mouse events instead, because the Accessibility action has no double- or right-click equivalent. Only the first 400 ms and 1,000 elements of the Dock walk are visited, so on a very crowded Dock some visible items may not get a hint.
 
-Window arrangement lives in the same search box. Search for `left`, `right`, `top`, `bottom`, `center`, `fill`, `maximize`, or `full screen`, then press Enter. Orbit invokes the matching macOS Window menu command when available, preserving system tiling gaps, Stage Manager behavior, the menu bar, and the Dock; direct Accessibility resizing remains a fallback.
+Window arrangement lives in the same search box. Search for `left`, `right`, `top`, `bottom`, `center`, `fill`, `maximize`, or `full screen`, then press Enter. When Orbit can find the matching item in the app's Window menu, it presses that instead of resizing the window itself, so the system's own tiling gaps, Stage Manager behaviour, menu bar and Dock insets apply. That lookup matches English menu titles ("Window", "Left", "Center", "Fill", "Enter Full Screen"), so on a localized macOS it usually takes the fallback path and resizes through Accessibility, which respects the menu bar and Dock only approximately.
 
 Exact system commands are also available: `restart`, `shutdown`, and `sleep`. Matching ignores surrounding whitespace and letter case but never uses fuzzy search, so text such as `restart now` remains an ordinary search. Each command requires two complete plain Enter presses; changing the query, pressing Escape, closing the overlay, or changing modifiers cancels the pending confirmation. Restart and shutdown then show macOS's native confirmation dialog.
 

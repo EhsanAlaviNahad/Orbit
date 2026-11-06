@@ -22,6 +22,10 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 - Security reports had no working fallback: SECURITY.md asked for a blank issue, but blank issues
   are disabled and every form here demands details. A security contact form now carries only a
   reply address and a severity.
+- The one-command installer deletes files, and the README did not say so: it replaces
+  `~/Applications/Orbit.app` and removes `~/Applications/Eclick.app` when that bundle carries
+  Orbit's old identifier. Both are now disclosed next to the command, and readers are pointed at
+  `Scripts/install-app.sh`, the file that actually contains the deletions.
 - Documentation corrections, none of which change the app: CI no longer described as running;
   contributing guide states the actual 4-space indentation and the real reason the tests avoid
   XCTest; window-arrangement, Dock, and scroll-step text matched to what the code does.

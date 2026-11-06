@@ -57,8 +57,15 @@ The installer clones the repo, builds a release bundle with `./Scripts/build-app
 to `~/Applications/Orbit.app`. It needs an Apple silicon Mac on macOS 27 or newer and the Swift 6.2
 command line tools (`xcode-select --install`). It never uses `sudo`.
 
-Prefer to read it first? [`Scripts/install.sh`](Scripts/install.sh) is about thirty lines. You can
-also clone the repo and run `./Scripts/install-app.sh` yourself.
+Because you are about to pipe a script into a shell, here is everything it deletes: the
+`~/Applications/Orbit.app` bundle it is replacing, and `~/Applications/Eclick.app` — the latter only
+when its bundle identifier really is `com.ehsanalavinahad.eclick`, so an unrelated app that happens
+to be called Eclick is left alone and reported instead. It also removes its own temporary clone.
+
+Prefer to read it first? Read both halves: [`Scripts/install.sh`](Scripts/install.sh) is about thirty
+lines and hands off to [`Scripts/install-app.sh`](Scripts/install-app.sh), which does the building,
+the replacing, and the installing. You can also clone the repo and run `./Scripts/install-app.sh`
+yourself.
 
 ## Highlights
 

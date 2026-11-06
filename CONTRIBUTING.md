@@ -17,8 +17,10 @@ bug fixes or refinements to scanning, hinting, and window arrangement.
 - Swift 6.2 or newer command line tools (`xcode-select --install`)
 
 Orbit targets `.macOS("27.0")` in `Package.swift`, so the app itself cannot be built on older
-operating systems or on GitHub-hosted runners that lack the macOS 27 SDK. The core logic tests do
-not need the app bundle and run anywhere with a Swift 6 toolchain.
+operating systems or on GitHub-hosted runners that lack the macOS 27 SDK. The core logic tests
+compile three source files directly with `swiftc`, which skips that platform gate, so they also run
+on macOS runners without the 27 SDK. They still link Apple's `ApplicationServices` and
+`CoreGraphics`, so they need macOS and do not run on Linux.
 
 ## Getting set up
 
@@ -55,7 +57,7 @@ obvious from the diff.
 
 ## Code style
 
-- Match the surrounding file. Swift's default formatting is used with 2-space indentation.
+- Match the surrounding file. Swift's default formatting is used with 4-space indentation.
 - Prefer small types with a single responsibility, as in `Core.swift` and `Scanner.swift`.
 - Do not add a dependency without discussing it. Orbit deliberately has none.
 - Never log, store, or transmit window or screen content. On-device only is a product guarantee,

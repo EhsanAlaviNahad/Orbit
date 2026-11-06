@@ -13,6 +13,13 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 
 - The live demo page carries Open Graph and Twitter card metadata, so sharing the demo link renders
   a preview card. GitHub's repository social preview only covers the repository URL itself.
+- The live demo page has a "Point, or type" section that computes, in the visitor's browser, how long
+  one day-to-day action takes by mouse versus by keyboard. It quotes no speed claim: there is no
+  benchmark of Orbit against a mouse. The pointing side is Fitts's law with the average coefficients
+  Wobbrock, Cutrell, Harada & MacKenzie report for mouse pointing (94.21 ms, 173.64 ms/bit; CHI 2008),
+  and the keyboard side is the visitor's own typing speed and query length plus the 15 ms Orbit cost
+  measured by `Scripts/bench-scan.sh` on macOS 27.2. Every slider is clamped to the range that study
+  measured, and the model is allowed to report that the mouse is faster.
 
 ### Changed
 

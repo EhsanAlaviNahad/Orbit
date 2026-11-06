@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose a new capability or a change in behaviour
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Orbit's scope is narrow on purpose: click visible controls from the keyboard. Requests
+        outside that are usually better served by another tool.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can you not do today? Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behaviour you want, step by step.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Anything else that would solve the same problem.
+  - type: dropdown
+    id: privacy
+    attributes:
+      label: Does this need data to leave the Mac?
+      description: Orbit's on-device guarantee is a hard constraint, so this decides feasibility early.
+      options:
+        - "No, fully on-device"
+        - "Yes, it needs network"
+        - "Not sure"
+    validations:
+      required: true
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Implementation
+      options:
+        - label: I am willing to build this and open a pull request

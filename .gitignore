@@ -1,0 +1,6 @@
+.build/
+.DS_Store
+*.moveis
+DerivedData/
+xcuserdata/
+.freebuff/

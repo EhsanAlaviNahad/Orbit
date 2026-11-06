@@ -31,6 +31,14 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 
 - Removed a redundant `macOS 26` availability gate now that the deployment floor is 27.0 (`36494ef`).
 
+Note that the documentation *inside this tag* is stale in several ways the `main` branch no longer
+is: the README and contributing guide there still describe CI as running, the contributing guide
+still claims 2-space indentation and that the tests run on any Swift 6 toolchain, the README still
+gives a wrong reason for avoiding XCTest and still overstates the window-arrangement and Dock
+behaviour, and the demo page still filtered by substring instead of Orbit's search rules. Run
+`git show v0.4.1:README.md` to see the stale text; the branch holds the corrected version. No file
+under `Sources/` or `Resources/` differs between the tag and `main`.
+
 ## [0.4.0] - 2026-08-28
 
 Only one commit carried version 0.4.0 (`2805f13`); the version moved to 0.4.1 the same day. No

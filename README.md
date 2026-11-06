@@ -118,7 +118,7 @@ Always grant permissions to the installed copy at `~/Applications/Orbit.app`. Bu
 | Option-Up / Option-Down | Scroll the focused app while hints stay open |
 | Escape / Command-E | Cancel hint mode |
 
-Option-Arrow scrolling uses a wheel event at the center of the active window. Adjust its distance per keypress from 0.5× to 3× with the Scroll Speed slider in Orbit Settings; 1× preserves the default behavior.
+Option-Arrow scrolling uses a wheel event at the center of the active window. Adjust its distance per keypress from 0.5× to 3× with the Scroll Speed slider in Orbit Settings; the default is 1×, which moves 36 pixels per keypress.
 
 Accessibility controls use their semantic action when possible. Other targets receive a left click at their center, which moves the pointer. OCR text is only added where it does not overlap an Accessibility target; some detected text may not actually be clickable.
 

@@ -7,7 +7,18 @@ All notable changes to Orbit are documented here. The format follows
 Versions before 0.4.0 shipped under the name **Eclick**. The rebrand kept the same bundle
 identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions carry forward.
 
-## [0.4.1] - 2026-11-03
+## [Unreleased]
+
+### Fixed
+
+- The live demo ran a substring filter while describing itself as Orbit's search. It now uses the
+  real normalisation, ranking tiers, aliases, and exact-only system-command rules from
+  `Core.swift`, checked against the Swift implementation (`018d1ec`, `7164c66`).
+- Documentation corrections, none of which change the app: CI no longer described as running;
+  contributing guide states the actual 4-space indentation and the real reason the tests avoid
+  XCTest; window-arrangement, Dock, and scroll-step text matched to what the code does.
+
+## [0.4.1] - 2026-11-06
 
 ### Fixed
 
@@ -21,6 +32,9 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 - Removed a redundant `macOS 26` availability gate now that the deployment floor is 27.0 (`36494ef`).
 
 ## [0.4.0] - 2026-08-28
+
+Only one commit carried version 0.4.0 (`2805f13`); the version moved to 0.4.1 the same day. No
+release was published for it.
 
 ### Changed
 
@@ -63,19 +77,19 @@ landed in that window are grouped here.
 
 ## [0.3.0] - 2026-08-11
 
-The first commit in this repository is tagged version 0.3.0, build 1. Earlier Eclick builds
-existed privately and are not documented here, because there is no record of them in this history.
+The first commit in this repository carries version 0.3.0, build 1, in `Resources/Info.plist`; no git
+tag was ever made for it. Earlier Eclick builds existed privately and are not documented here,
+because there is no record of them in this history.
 
 ### Added
 
 - Initial public release as Eclick: Command-E to scan the focused window, search visible controls by
   name or home-row hint, and click without the mouse (`0b67c09`).
 - Keyboard mouse actions: click, double-click, and right-click the selected target (`75057b1`).
-- Faster, more reliable hint activation (`f0e04db`).
 - Stable local app identity so rebuilds keep macOS permissions.
 
 [Unreleased]: https://github.com/EhsanAlaviNahad/Orbit/compare/v0.4.1...HEAD
 [0.4.1]: https://github.com/EhsanAlaviNahad/Orbit/releases/tag/v0.4.1
-[0.4.0]: https://github.com/EhsanAlaviNahad/Orbit/releases/tag/v0.4.0
-[0.3.4]: https://github.com/EhsanAlaviNahad/Orbit/releases/tag/v0.3.4
-[0.3.0]: https://github.com/EhsanAlaviNahad/Orbit/releases/tag/v0.3.0
+[0.4.0]: https://github.com/EhsanAlaviNahad/Orbit/commit/2805f13
+[0.3.4]: https://github.com/EhsanAlaviNahad/Orbit/commit/f0e04db
+[0.3.0]: https://github.com/EhsanAlaviNahad/Orbit/commit/0b67c09

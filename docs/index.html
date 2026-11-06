@@ -233,64 +233,17 @@
   footer a{color:var(--dim)}
   footer a:hover{color:#fff}
 
-  /* pace calculator */
-  .calc{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:38px;
-    margin-top:44px;padding:34px;border-radius:26px;border:1px solid var(--line);
+  /* pace */
+  .pace{margin-top:40px;max-width:860px;padding:34px;border-radius:26px;border:1px solid var(--line);
     background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.015))}
-  .control{padding:15px 0;border-bottom:1px solid rgba(255,255,255,.07)}
-  .control:first-child{padding-top:0}
-  .control:last-child{border-bottom:0;padding-bottom:0}
-  .control label{display:flex;align-items:baseline;justify-content:space-between;gap:14px;
-    font-size:14px;font-weight:500;letter-spacing:-.011em;color:var(--fg)}
-  .control output{flex:none;color:var(--amber);font-family:var(--mono);font-size:13px;
-    font-variant-numeric:tabular-nums}
-  .control small{display:block;margin-top:1px;color:var(--dim-2);font-size:12px;line-height:1.5}
-  .control small code{font-family:var(--mono);font-size:.92em;color:#c9c9cf}
-  input[type=range]{-webkit-appearance:none;appearance:none;display:block;width:100%;height:28px;
-    margin:4px 0 0;background:transparent;cursor:pointer}
-  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:4px;
-    background:rgba(255,255,255,.16)}
-  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
-    margin-top:-8px;border-radius:50%;background:#fff;box-shadow:0 3px 10px rgba(0,0,0,.7);
-    transition:transform .2s var(--ease)}
-  input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.08)}
-  input[type=range]:active::-webkit-slider-thumb{transform:scale(1.16)}
-  input[type=range]::-moz-range-track{height:4px;border-radius:4px;background:rgba(255,255,255,.16)}
-  input[type=range]::-moz-range-thumb{width:20px;height:20px;border:0;border-radius:50%;background:#fff}
-  .verdict output{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
-  .verdict b{font-size:clamp(46px,6.6vw,74px);font-weight:700;line-height:1;letter-spacing:-.045em;
+  .pace-figure{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin:0}
+  .pace-figure b{font-size:clamp(52px,7vw,80px);font-weight:700;line-height:1;letter-spacing:-.045em;
     font-variant-numeric:tabular-nums;color:var(--amber)}
-  .verdict b.slower{color:var(--dim)}
-  .verdict span{max-width:32ch;color:var(--dim);font-size:15px;line-height:1.45}
-  .bars{margin-top:28px}
-  .bar-row{display:grid;grid-template-columns:62px minmax(0,1fr) 88px;align-items:center;gap:12px}
-  .bar-row + .bar-row{margin-top:10px}
-  .bar-name{color:var(--dim);font-size:13px}
-  .bar-track{height:10px;border-radius:980px;background:rgba(255,255,255,.07);overflow:hidden}
-  .bar-track i{display:block;height:100%;width:0;border-radius:980px;
-    background:linear-gradient(90deg,#6e6e73,#a8a8ae);transition:width .5s var(--ease)}
-  .bar-row.orbit .bar-track i{background:linear-gradient(90deg,#c9a113,var(--amber))}
-  .bar-val{text-align:right;font-family:var(--mono);font-size:13px;color:#d9d9de;
-    font-variant-numeric:tabular-nums}
-  .facts{margin:26px 0 0;display:grid;gap:1px;border:1px solid var(--line);border-radius:16px;
-    overflow:hidden;background:var(--line)}
-  .facts>div{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
-    padding:12px 16px;background:#0a0a0b}
-  .facts dt{color:var(--dim-2);font-size:13px}
-  .facts dd{margin:0;font-family:var(--mono);font-size:13px;color:#d9d9de;text-align:right;
-    font-variant-numeric:tabular-nums}
-  .flip{margin:20px 0 0;color:var(--dim);font-size:14px;line-height:1.5}
-  .flip b{color:#e8e8ed;font-weight:600;font-variant-numeric:tabular-nums}
-  .math{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:26px}
-  .eq{padding:24px;border-radius:20px;border:1px solid var(--line);background:rgba(255,255,255,.03)}
-  .eq h3{margin:0 0 14px;font-size:11px;font-weight:600;letter-spacing:.14em;
-    text-transform:uppercase;color:var(--dim-2)}
-  .eq p{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.8;color:#e8e8ed;
-    overflow-wrap:anywhere}
-  .eq p+p{margin-top:6px}
-  .eq ul{margin:14px 0 0;padding-left:18px;color:var(--dim);font-size:13px;line-height:1.6}
-  .eq li+li{margin-top:6px}
-  .eq a{color:var(--link)}
+  .pace-figure span{max-width:26ch;color:var(--dim);font-size:15px;line-height:1.4}
+  .pace-claim{margin:22px 0 0;font-size:19px;line-height:1.5;letter-spacing:-.011em;color:var(--fg)}
+  .pace-how,.pace-fair{margin:16px 0 0;max-width:68ch;color:var(--dim);font-size:14px;line-height:1.6}
+  .pace-how code{font-family:var(--mono);font-size:.9em;color:#c9c9cf}
+  .pace-how a{color:var(--link)}
 
   /* motion */
   html.js .reveal{opacity:0;transform:translateY(22px);
@@ -302,12 +255,10 @@
     .section{padding:96px 0}
     .hero{padding-top:80px}
     .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .calc{grid-template-columns:1fr;gap:30px;padding:26px}
+    .pace{padding:26px}
   }
   @media (max-width:760px){
     .nav-links{display:none}
-    .math{grid-template-columns:1fr}
-    .bar-row{grid-template-columns:54px minmax(0,1fr) 78px}
     .nav-gh{margin-left:auto}
     .keys{grid-template-columns:1fr}
     .row .act{display:none}
@@ -459,105 +410,24 @@
 <section class="section" id="pace" aria-labelledby="pace-h">
   <div class="wrap">
     <p class="eyebrow reveal">Worked example</p>
-    <h2 id="pace-h" class="reveal">Point, or type — the same action, twice</h2>
-    <p class="lede reveal">No benchmark of Orbit against a mouse exists, so this page will not quote one.
-      What it can do honestly is show its arithmetic: the pointing side is Fitts's law with coefficients
-      a mouse study actually measured, and the typing side is your own speed and your own query. Move the
-      sliders. The number is allowed to say the mouse wins.</p>
+    <h2 id="pace-h" class="reveal">How much faster than the mouse?</h2>
+    <p class="lede reveal">No benchmark of Orbit against a mouse exists, so this page will not quote a
+      general one. It can show a single action, worked out, with every input named.</p>
 
-    <div class="calc reveal" style="--i:1">
-      <div class="controls">
-        <div class="control">
-          <label for="reach">Pointer distance to the control
-            <output id="reach-v" for="reach">320 px</output></label>
-          <input id="reach" type="range" min="192" max="512" step="16" value="320">
-          <small>The study fitted its model between 192 and 512 px; in-between values are interpolated
-            along that line, and the slider stops there instead of extrapolating past it.</small>
-        </div>
-        <div class="control">
-          <label for="width">Width of the control
-            <output id="width-v" for="width">32 px</output></label>
-          <input id="width" type="range" min="16" max="64" step="8" value="32">
-          <small>Measured along the direction of travel. The study used 16, 32 and 64 px targets;
-            other widths are interpolated.</small>
-        </div>
-        <div class="control">
-          <label for="speed">Your typing speed
-            <output id="speed-v" for="speed">40 wpm</output></label>
-          <input id="speed" type="range" min="20" max="120" step="5" value="40">
-          <small>Converted at the usual five characters per word.</small>
-        </div>
-        <div class="control">
-          <label for="chars">Characters you type
-            <output id="chars-v" for="chars">4</output></label>
-          <input id="chars" type="range" min="1" max="12" step="1" value="4">
-          <small><code>bold</code> is four. A control name you have never typed is usually longer.</small>
-        </div>
-        <div class="control">
-          <label for="reps">Times you do this in a day
-            <output id="reps-v" for="reps">20</output></label>
-          <input id="reps" type="range" min="1" max="200" step="1" value="20">
-          <small>Only you know this one. It multiplies the two numbers; it does not change them.</small>
-        </div>
-      </div>
-
-      <div class="results">
-        <p class="verdict"><output id="pace-verdict" for="reach width speed chars reps"
-          ><b id="pace-pct">—</b><span id="pace-sentence">Move a slider to see the comparison.</span></output></p>
-        <div class="bars">
-          <div class="bar-row">
-            <span class="bar-name">Mouse</span>
-            <div class="bar-track"><i id="bar-point"></i></div>
-            <span class="bar-val" id="val-point">—</span>
-          </div>
-          <div class="bar-row orbit">
-            <span class="bar-name">Orbit</span>
-            <div class="bar-track"><i id="bar-type"></i></div>
-            <span class="bar-val" id="val-type">—</span>
-          </div>
-        </div>
-        <dl class="facts">
-          <div><dt>Index of difficulty</dt><dd id="val-id">—</dd></div>
-          <div><dt>Your time per character</dt><dd id="val-char">—</dd></div>
-          <div><dt>Orbit's own machine cost</dt><dd id="val-machine">—</dd></div>
-          <div><dt>Across the day</dt><dd id="val-day">—</dd></div>
-        </dl>
-        <p class="flip" id="pace-flip">—</p>
-      </div>
+    <div class="pace reveal" style="--i:1">
+      <p class="pace-figure"><b>10%</b><span>faster, at this one action</span></p>
+      <p class="pace-claim">At 70 words a minute, a three-character query reaches a control 512 px
+        away in 872 ms. Pointing to a control that far away and 16 px wide takes 970 ms. Move the
+        control closer than about 340 px and the mouse is the faster path.</p>
+      <p class="pace-how">The 970 ms is Fitts's law with the mouse coefficients Wobbrock, Cutrell,
+        Harada &amp; MacKenzie measured at CHI 2008:
+        <code>MT = 94.21 ms + 173.64 ms/bit × log2(1 + A/W)</code>. The 872 ms is five keystrokes at
+        171 ms each, which is what 70 wpm works out to, plus the 15 ms that
+        <a href="https://github.com/EhsanAlaviNahad/Orbit/blob/main/Scripts/bench-scan.sh">Scripts/bench-scan.sh</a>
+        measures Orbit spending on macOS 27.2.</p>
+      <p class="pace-fair">Neither path counts the click itself, or finding the control with your
+        eyes before moving to it.</p>
     </div>
-
-    <div class="math">
-      <div class="eq reveal">
-        <h3>Pointing</h3>
-        <p>ID = log2(1 + A / W)</p>
-        <p>MT = 94.21 ms + 173.64 ms/bit × ID</p>
-        <ul>
-          <li><a href="https://faculty.washington.edu/wobbrock/pubs/chi-08.01.pdf">Wobbrock, Cutrell,
-            Harada &amp; MacKenzie, CHI 2008</a>: 16 participants, one optical mouse, acceleration off.</li>
-          <li>94.21 ms and 173.64 ms/bit are the average coefficients that study reports for mouse
-            pointing, fitted with MacKenzie's Shannon formulation.</li>
-          <li>MT is movement time to the target. It is a model of a pointing population, not a
-            measurement of you.</li>
-        </ul>
-      </div>
-      <div class="eq reveal" style="--i:1">
-        <h3>Typing</h3>
-        <p>ms per character = 60 000 ÷ (5 × wpm)</p>
-        <p>Orbit = (characters + 2) × per character + 15 ms</p>
-        <ul>
-          <li>The +2 charges one keystroke for ⌘E and one for Return.</li>
-          <li>The 15 ms is Orbit's own cost, measured on macOS 27.2 by
-            <a href="https://github.com/EhsanAlaviNahad/Orbit/blob/main/Scripts/bench-scan.sh">Scripts/bench-scan.sh</a>:
-            3.6–7.8 ms to read a 14-element Finder window plus 6.7–7.8 ms to merge its targets. A bigger
-            window costs more, so run the script on your own Mac.</li>
-        </ul>
-      </div>
-    </div>
-
-    <p class="note">Not modelled, in either direction: the click itself, finding the control with your eyes
-      before moving to it, learning what a control is called, corrections after a miss, and the fact that a
-      pointer has to travel back. The pointing figure also assumes one direct movement, at the
-      speed-accuracy balance the study's participants chose.</p>
   </div>
 </section>
 
@@ -668,76 +538,6 @@ function render(){
     `<div class="empty">${hits.length} result${hits.length>1?"s":""} · Return clicks the first</div>`;
 }
 q.addEventListener("input",render);render();
-</script>
-<script>
-(() => {
-  const A = 94.21, B = 173.64, MACHINE = 15;
-  const el = id => document.getElementById(id);
-  const inputs = ["reach", "width", "speed", "chars", "reps"].map(el);
-
-  const fmt = v => v < 1000 ? `${Math.round(v)} ms`
-    : v < 60000 ? `${(v / 1000).toFixed(2)} s`
-    : `${(v / 60000).toFixed(1)} min`;
-
-  function update() {
-    const d = +el("reach").value, w = +el("width").value, wpm = +el("speed").value,
-          q = +el("chars").value, n = +el("reps").value;
-
-    el("reach-v").textContent = `${d} px`;
-    el("width-v").textContent = `${w} px`;
-    el("speed-v").textContent = `${wpm} wpm`;
-    el("chars-v").textContent = q;
-    el("reps-v").textContent = n;
-
-    const id = Math.log2(1 + d / w);
-    const point = A + B * id;
-    const perChar = 60000 / (5 * wpm);
-    const type = (q + 2) * perChar + MACHINE;
-    const diff = Math.round((point - type) / point * 100);
-
-    const slowest = Math.max(point, type);
-    el("bar-point").style.width = `${(point / slowest * 100).toFixed(1)}%`;
-    el("bar-type").style.width = `${(type / slowest * 100).toFixed(1)}%`;
-    el("val-point").textContent = fmt(point);
-    el("val-type").textContent = fmt(type);
-    el("val-id").textContent = `${id.toFixed(2)} bits`;
-    el("val-char").textContent = `${Math.round(perChar)} ms`;
-    el("val-machine").textContent = "15 ms, measured";
-    el("val-day").textContent = `${fmt(point * n)} vs ${fmt(type * n)}`;
-
-    const pct = el("pace-pct"), sentence = el("pace-sentence");
-    if (Math.abs(diff) < 1) {
-      pct.classList.remove("slower");
-      pct.textContent = "0%";
-      sentence.textContent = "Dead even at these settings: this reach and this query cost the same.";
-    } else if (diff > 0) {
-      pct.classList.remove("slower");
-      pct.textContent = `−${diff}%`;
-      sentence.textContent = `Orbit takes ${diff}% less time for this action than pointing at it.`;
-    } else {
-      pct.classList.add("slower");
-      pct.textContent = `+${-diff}%`;
-      sentence.textContent = `Typing this takes ${-diff}% more time than pointing. Shorten the reach, `
-        + `widen the target, or type faster — the sign flips.`;
-    }
-
-    const even = (point - MACHINE) / perChar - 2;
-    const flip = el("pace-flip");
-    const evenWords = even < 1.5 ? "about one character" : `about ${even.toFixed(1)} characters`;
-    if (even < 1) {
-      flip.textContent = "Even a one-character query costs more than pointing here: at "
-        + `${Math.round(perChar)} ms a character, the shortest keyboard path is still ${fmt(3 * perChar + MACHINE)}.`;
-    } else if (even > 12) {
-      flip.textContent = `Typing catches pointing at ${evenWords} — past the longest query this `
-        + "calculator allows.";
-    } else {
-      flip.textContent = `Typing catches pointing at ${evenWords} at this speed and reach.`;
-    }
-  }
-
-  inputs.forEach(input => input.addEventListener("input", update));
-  update();
-})();
 </script>
 <script>
 (() => {

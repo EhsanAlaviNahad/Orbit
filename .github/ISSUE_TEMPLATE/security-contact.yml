@@ -1,0 +1,33 @@
+name: Security contact request
+description: Ask for a private channel when GitHub's private vulnerability reporting is unavailable to you
+title: "security: contact needed"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form only if [private vulnerability reporting](https://github.com/EhsanAlaviNahad/Orbit/security/advisories/new)
+        is unavailable to you. It is the first message in a two-step process: this issue carries a
+        way to reach you, and the conversation happens afterwards.
+
+        Do **not** paste reproduction steps, proof-of-concept code, screenshots, or the affected
+        control names here. Public issues are indexed and remain visible after they are closed.
+  - type: input
+    id: contact
+    attributes:
+      label: How to reach you
+      description: A GitHub username we can mention in a private advisory, or an email address.
+      placeholder: "gh-username or you@example.com"
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity, in one word
+      description: Your best guess is fine. This only decides how quickly a maintainer looks.
+      options:
+        - low
+        - moderate
+        - high
+    validations:
+      required: true

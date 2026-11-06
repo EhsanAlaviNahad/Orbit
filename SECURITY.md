@@ -19,8 +19,12 @@ Please use [GitHub Private Vulnerability Reporting](https://github.com/EhsanAlav
 Do not open a public issue, and do not post reproduction steps in a discussion or pull request
 before a fix exists.
 
-If private reporting is unavailable to you, open a blank issue with the title `security: contact
-needed` and no details, then wait for a maintainer to reply.
+If private reporting is unavailable to you, use the
+[security contact form](https://github.com/EhsanAlaviNahad/Orbit/issues/new?template=security-contact.yml).
+It opens an issue titled `security: contact needed` carrying only a way to reach you and a rough
+severity, then wait for a maintainer to reply. Blank issues are disabled on this repository, so do
+not use the bug report form as a fallback — its required fields would make you describe the flaw
+before a fix exists.
 
 ## What to include
 

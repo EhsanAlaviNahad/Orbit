@@ -14,6 +14,9 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 - The live demo ran a substring filter while describing itself as Orbit's search. It now uses the
   real normalisation, ranking tiers, aliases, and exact-only system-command rules from
   `Core.swift`, checked against the Swift implementation (`018d1ec`, `7164c66`).
+- Security reports had no working fallback: SECURITY.md asked for a blank issue, but blank issues
+  are disabled and every form here demands details. A security contact form now carries only a
+  reply address and a severity.
 - Documentation corrections, none of which change the app: CI no longer described as running;
   contributing guide states the actual 4-space indentation and the real reason the tests avoid
   XCTest; window-arrangement, Dock, and scroll-step text matched to what the code does.

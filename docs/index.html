@@ -239,7 +239,7 @@
   .pace-figure{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin:0}
   .pace-figure b{font-size:clamp(52px,7vw,80px);font-weight:700;line-height:1;letter-spacing:-.045em;
     font-variant-numeric:tabular-nums;color:var(--amber)}
-  .pace-figure span{max-width:26ch;color:var(--dim);font-size:15px;line-height:1.4}
+  .pace-figure span{max-width:54ch;color:var(--dim);font-size:15px;line-height:1.4}
   .pace-claim{margin:22px 0 0;font-size:19px;line-height:1.5;letter-spacing:-.011em;color:var(--fg)}
   .pace-how,.pace-fair{margin:16px 0 0;max-width:68ch;color:var(--dim);font-size:14px;line-height:1.6}
   .pace-how code{font-family:var(--mono);font-size:.9em;color:#c9c9cf}
@@ -415,14 +415,15 @@
       general one. It can show a single action, worked out, with every input named.</p>
 
     <div class="pace reveal" style="--i:1">
-      <p class="pace-figure"><b>10%</b><span>faster, at this one action</span></p>
-      <p class="pace-claim">At 70 words a minute, a three-character query reaches a control 512 px
-        away in 872 ms. Pointing to a control that far away and 16 px wide takes 970 ms. Move the
-        control closer than about 340 px and the mouse is the faster path.</p>
+      <p class="pace-figure"><b>1.9×</b><span>nearly twice as fast, at this one action —
+        970 ÷ 515</span></p>
+      <p class="pace-claim">At 120 words a minute, a three-character query reaches a control 512 px
+        away in 515 ms. Pointing to a control that far away and 16 px wide takes 970 ms. Move the
+        control closer than about 70 px and the mouse is the faster path.</p>
       <p class="pace-how">The 970 ms is Fitts's law with the mouse coefficients Wobbrock, Cutrell,
         Harada &amp; MacKenzie measured at CHI 2008:
-        <code>MT = 94.21 ms + 173.64 ms/bit × log2(1 + A/W)</code>. The 872 ms is five keystrokes at
-        171 ms each, which is what 70 wpm works out to, plus the 15 ms that
+        <code>MT = 94.21 ms + 173.64 ms/bit × log2(1 + A/W)</code>. The 515 ms is five keystrokes at
+        100 ms each, which is what 120 wpm works out to — fast-typist speed — plus the 15 ms that
         <a href="https://github.com/EhsanAlaviNahad/Orbit/blob/main/Scripts/bench-scan.sh">Scripts/bench-scan.sh</a>
         measures Orbit spending on macOS 27.2.</p>
       <p class="pace-fair">Neither path counts the click itself, or finding the control with your

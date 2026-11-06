@@ -17,9 +17,9 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
   claim, because no benchmark of Orbit against a mouse exists; it works one action out instead,
   naming every input. The pointing figure is Fitts's law with the mouse coefficients Wobbrock,
   Cutrell, Harada & MacKenzie report at CHI 2008 (94.21 ms, 173.64 ms/bit), and the keyboard figure
-  is five keystrokes at 70 wpm plus the 15 ms `Scripts/bench-scan.sh` measures on macOS 27.2. That
-  gives 872 ms against 970 ms for a control 512 px away and 16 px wide — 10% faster — and the
-  section says plainly that closer than about 340 px the mouse wins.
+  is five keystrokes at 120 wpm plus the 15 ms `Scripts/bench-scan.sh` measures on macOS 27.2. That
+  gives 515 ms against 970 ms for a control 512 px away and 16 px wide — 1.9× — and the section
+  says plainly that closer than about 70 px the mouse wins.
 
 ### Changed
 

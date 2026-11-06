@@ -134,7 +134,10 @@ Search reads direct keyboard events so the overlay can remain non-activating. St
 
 ## Test
 
-The installed command-line toolchain does not include a usable XCTest runtime, so the core tests compile and run as a standalone Swift executable:
+The core tests are a standalone Swift executable, not an XCTest suite. `Package.swift` declares only
+the app's executable target and no test target, so `swift test` reports `no tests found`;
+`./Scripts/test-core.sh` compiles the tested sources together with `Tests/CoreSelfTests/main.swift`
+using `swiftc` and runs the result:
 
 ```sh
 ./Scripts/test-core.sh

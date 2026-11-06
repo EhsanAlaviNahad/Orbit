@@ -257,7 +257,7 @@
   input[type=range]:active::-webkit-slider-thumb{transform:scale(1.16)}
   input[type=range]::-moz-range-track{height:4px;border-radius:4px;background:rgba(255,255,255,.16)}
   input[type=range]::-moz-range-thumb{width:20px;height:20px;border:0;border-radius:50%;background:#fff}
-  .verdict{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  .verdict output{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
   .verdict b{font-size:clamp(46px,6.6vw,74px);font-weight:700;line-height:1;letter-spacing:-.045em;
     font-variant-numeric:tabular-nums;color:var(--amber)}
   .verdict b.slower{color:var(--dim)}
@@ -502,8 +502,8 @@
       </div>
 
       <div class="results">
-        <p class="verdict"><b id="pace-pct">—</b><span id="pace-sentence">Move a slider to see the
-            comparison.</span></p>
+        <p class="verdict"><output id="pace-verdict" for="reach width speed chars reps"
+          ><b id="pace-pct">—</b><span id="pace-sentence">Move a slider to see the comparison.</span></output></p>
         <div class="bars">
           <div class="bar-row">
             <span class="bar-name">Mouse</span>

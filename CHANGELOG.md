@@ -24,8 +24,12 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
   reply address and a severity.
 - The one-command installer deletes files, and the README did not say so: it replaces
   `~/Applications/Orbit.app` and removes `~/Applications/Eclick.app` when that bundle carries
-  Orbit's old identifier. Both are now disclosed next to the command, and readers are pointed at
-  `Scripts/install-app.sh`, the file that actually contains the deletions.
+  Orbit's old identifier. Both are now disclosed next to the command, in the README and on the live
+  demo page, and readers are pointed at `Scripts/install-app.sh`, the file that actually contains
+  the deletions.
+- The live demo page listed six words for window arrangement while the README and `Core.swift` carry
+  eight: `top` and `bottom`, which are real aliases for `Tile Window Top` and `Tile Window Bottom`,
+  were missing from the page.
 - Documentation corrections, none of which change the app: CI no longer described as running;
   contributing guide states the actual 4-space indentation and the real reason the tests avoid
   XCTest; window-arrangement, Dock, and scroll-step text matched to what the code does.

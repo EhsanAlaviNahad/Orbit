@@ -91,7 +91,7 @@
     and optional on-device Vision OCR where the accessibility tree is sparse.</p>
   <div class="keys">
     <div class="key"><b>Click, double-click, right-click</b><span>Return, Option-Return, Shift-Return</span></div>
-    <div class="key"><b>Arrange the window</b><span>left, right, center, fill, maximize, full screen</span></div>
+    <div class="key"><b>Arrange the window</b><span>left, right, top, bottom, center, fill, maximize, full screen</span></div>
     <div class="key"><b>Scroll with hints open</b><span>Option-Up / Option-Down, 0.5× to 3×</span></div>
     <div class="key"><b>System commands</b><span>restart, shutdown, sleep — each needs two Returns</span></div>
   </div>
@@ -112,7 +112,10 @@
   <h2>Install</h2>
   <pre class="install">curl -fsSL https://raw.githubusercontent.com/EhsanAlaviNahad/Orbit/main/Scripts/install.sh | bash</pre>
   <p class="note">Requires an Apple silicon Mac on macOS 27 or newer, plus the Swift 6.2 command line
-    tools. Orbit then lives only in the menu bar; grant it Accessibility on first use.</p>
+    tools. Orbit then lives only in the menu bar; grant it Accessibility on first use. The script
+    replaces <code>~/Applications/Orbit.app</code> and removes <code>~/Applications/Eclick.app</code>
+    only if that bundle carries Orbit's old identifier — read
+    <code>Scripts/install-app.sh</code>, which is where that happens, before you pipe it into a shell.</p>
 
   <h2>Privacy</h2>
   <p class="lede">No network calls, no telemetry, no accounts. Screen content, element names, and

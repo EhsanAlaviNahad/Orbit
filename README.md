@@ -10,7 +10,6 @@
 <p align="center"><b>Click any visible control on your Mac without touching the mouse — press ⌘E, type, hit Return.</b></p>
 
 <p align="center">
-  <a href="https://github.com/EhsanAlaviNahad/Orbit/actions/workflows/ci.yml"><img src="https://github.com/EhsanAlaviNahad/Orbit/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://github.com/EhsanAlaviNahad/Orbit/releases/tag/v0.4.1"><img src="https://img.shields.io/github/v/release/EhsanAlaviNahad/Orbit?label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/platform-macOS%2027%2B-lightgrey" alt="Requires macOS 27 or newer">

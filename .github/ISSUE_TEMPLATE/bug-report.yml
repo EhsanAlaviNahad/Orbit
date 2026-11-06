@@ -1,0 +1,78 @@
+name: Bug report
+description: Report something that does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Orbit depends on live Accessibility data, so the exact app you were targeting matters.
+        Please fill in as much as you can.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe what you pressed and what Orbit did.
+      placeholder: |
+        1. Focused a window in Safari
+        2. Pressed Command-E
+        3. Typed "back"
+        4. Pressed Enter
+        Nothing was clicked.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: input
+    id: target-app
+    attributes:
+      label: App you were targeting
+      description: Which application held focus?
+      placeholder: Safari 26.1
+    validations:
+      required: true
+  - type: dropdown
+    id: ocr
+    attributes:
+      label: Was OCR fallback enabled?
+      options:
+        - "Yes"
+        - "No"
+        - "Don't know"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: From  About This Mac.
+      placeholder: "27.2"
+    validations:
+      required: true
+  - type: input
+    id: orbit-version
+    attributes:
+      label: Orbit version
+      description: From Orbit Settings, or the release tag you built.
+      placeholder: "0.4.1"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output
+      description: Any relevant lines from Console.app. Paste as text, not screenshots.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I granted Accessibility permission to ~/Applications/Orbit.app
+          required: true
+        - label: I searched existing issues and found none like mine
+          required: true

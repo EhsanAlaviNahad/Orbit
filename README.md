@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/demo/orbit-demo.gif" width="820" alt="Orbit demo: the Command-E overlay opens over a TextEdit window, hint labels appear on every toolbar control, the user types bold into the search field, and pressing Return activates the Bold button.">
+  <img src="docs/demo/orbit-demo.gif" width="820" alt="Orbit demo: the Command-E overlay opens over a TextEdit window, hint labels appear on the toolbar controls, the user types bold into the search field, and pressing Return activates the Bold button.">
 </p>
 
 <h1 align="center">

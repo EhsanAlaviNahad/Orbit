@@ -9,6 +9,11 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 
 ## [Unreleased]
 
+### Added
+
+- The live demo page carries Open Graph and Twitter card metadata, so sharing the demo link renders
+  a preview card. GitHub's repository social preview only covers the repository URL itself.
+
 ### Fixed
 
 - The live demo ran a substring filter while describing itself as Orbit's search. It now uses the

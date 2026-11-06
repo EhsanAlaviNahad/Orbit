@@ -146,12 +146,18 @@ Run `./Scripts/install-app.sh` again to replace the installed bundle. Version 0.
 
 To uninstall, quit Orbit and move `~/Applications/Orbit.app` to Trash. Disable “Launch at login” first if it was enabled.
 
-### What CI covers
+### Tests and CI status
 
-CI runs `./Scripts/test-core.sh` on a macOS runner, plus shell syntax checks, `Info.plist`
-validation, and a check that the licence, changelog, and contributing guide are present.
+There is no CI running on this repository yet. Until there is, run the tests locally before you ask
+for a review:
 
-The app bundle is **not** built in CI. `Package.swift` declares `.macOS("27.0")` and no
+```sh
+./Scripts/test-core.sh
+```
+
+The planned workflow will run that script on a macOS runner, plus shell syntax checks,
+`Info.plist` validation, and a check that the licence, changelog, and contributing guide are
+present. It will **not** build the app bundle: `Package.swift` declares `.macOS("27.0")` and no
 GitHub-hosted runner ships a macOS 27 SDK, so a full build there would fail for environmental
 reasons rather than real defects. Build the app locally with `./Scripts/build-app.sh`, or register a
 macOS 27 machine as a self-hosted runner if you want that job covered in CI.

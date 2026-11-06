@@ -50,7 +50,8 @@ obvious from the diff.
 - One logical change per PR.
 - Explain the problem, then the approach, then how you verified it.
 - Attach a screenshot or recording for any visual change to the overlay or hint labels.
-- CI must be green before you ask for a review.
+- `./Scripts/test-core.sh` passes on your machine. There is no CI on this repository yet, so this
+  check is yours to run.
 
 ## Code style
 

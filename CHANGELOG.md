@@ -14,8 +14,17 @@ identifier, `com.ehsanalavinahad.eclick`, so preferences and macOS permissions c
 - The live demo page carries Open Graph and Twitter card metadata, so sharing the demo link renders
   a preview card. GitHub's repository social preview only covers the repository URL itself.
 
+### Changed
+
+- The live demo page was rebuilt in Apple's design language: the system SF font stack, a translucent
+  sticky bar, scroll-triggered reveals that switch off under `prefers-reduced-motion`, and a copy
+  button beside the install command. Same words, same simulator, same 22-query verification.
+
 ### Fixed
 
+- The stylesheet on the live demo page failed to parse: an unclosed `clamp(` on the hero heading
+  invalidated every rule after it, so the deployed page fell back to browser defaults. The rebuilt
+  stylesheet is balanced and was checked at desktop and phone widths.
 - The live demo ran a substring filter while describing itself as Orbit's search. It now uses the
   real normalisation, ranking tiers, aliases, and exact-only system-command rules from
   `Core.swift`, checked against the Swift implementation (`018d1ec`, `7164c66`).

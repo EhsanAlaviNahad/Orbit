@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000000">
 <title>Orbit — click any control on your Mac without the mouse</title>
 <meta name="description" content="Orbit is a macOS menu bar app that lets you click any visible control from the keyboard. Press Command-E, type, press Enter.">
 <meta property="og:type" content="website">
@@ -20,113 +22,410 @@
 <meta name="twitter:image" content="https://ehsanalavinahad.github.io/Orbit/social-preview.png">
 <meta name="twitter:image:alt" content="A dark search field containing the query bold, above a document window whose toolbar controls carry two-letter hint labels.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='6' fill='%23f5c518'/%3E%3Cellipse cx='16' cy='16' rx='14' ry='5' fill='none' stroke='%23e8e8ea' stroke-width='2' transform='rotate(-24 16 16)'/%3E%3C/svg%3E">
+<script>document.documentElement.classList.add('js')</script>
 <style>
-  :root{--bg:#050507;--fg:#f5f5f7;--dim:#86868b;--card:#121317;--line:#24252b;--accent:#f5c518}
+  :root{
+    --bg:#000;
+    --fg:#f5f5f7;
+    --dim:#a1a1a6;
+    --dim-2:#7f7f85;
+    --line:rgba(255,255,255,.12);
+    --line-2:rgba(255,255,255,.26);
+    --blue:#0071e3;
+    --blue-hi:#0a84ff;
+    --link:#2997ff;
+    --amber:#f5c518;
+    --ease:cubic-bezier(.16,1,.3,1);
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-    font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
-    -webkit-font-smoothing:antialiased;line-height:1.5}
-  .wrap{max-width:980px;margin:0 auto;padding:0 22px}
-  header{padding:84px 0 28px;text-align:center}
-  h1{font-size:clamp(44px,8vw,84px;line-height:1.02;letter-spacing:-.03em;margin:0 0 14px;font-weight:700}
-  .sub{color:var(--dim);font-size:clamp(18px,2.6vw,25px);max-width:640px;margin:0 auto;letter-spacing:-.01em}
-  .cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:30px 0 0}
-  .btn{background:var(--accent);color:#0a0a0a;border-radius:999px;padding:13px 26px;font-weight:600;
-    text-decoration:none;font-size:16px;letter-spacing:-.01em}
-  .btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
-  .stage{margin:56px 0 0;border-radius:24px;overflow:hidden;background:linear-gradient(180deg,#1b1d23,#0a0b0e);
-    border:1px solid var(--line);padding:10px}
-  .stage img{display:block;width:100%;height:auto;border-radius:16px}
-  h2{font-size:clamp(28px,4.4vw,42px);letter-spacing:-.025em;margin:84px 0 10px;font-weight:700}
-  p.lede{color:var(--dim);font-size:19px;margin:0 0 30px;max-width:660px}
-  .keys{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin:0 0 8px}
-  .key{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px}
-  .key b{display:block;font-size:15px;margin-bottom:6px}
-  .key span{color:var(--dim);font-size:14px}
-  kbd{background:#2a2b32;border:1px solid #3a3b44;border-bottom-width:2px;border-radius:6px;
-    padding:2px 8px;font:600 13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
-  .sim{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:24px;margin-top:8px}
-  .sim label{display:block;color:var(--dim);font-size:13px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em}
-  #q{width:100%;background:#0b0c10;border:1px solid var(--line);color:var(--fg);border-radius:12px;
-    padding:14px 16px;font:17px ui-monospace,SFMono-Regular,Menlo,monospace}
-  #out{margin-top:16px;min-height:120px}
-  .row{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 14px;
-    border-radius:10px;border:1px solid transparent}
-  .row.hit{background:#1b1c22;border-color:var(--line)}
-  .row.sel{background:#2a2410;border-color:#5a4c14}
-  .hint{font:700 12px/1 ui-monospace,Menlo,monospace;background:var(--accent);color:#0a0a0a;
-    padding:5px 7px;border-radius:5px;flex:0 0 auto}
-  .nm{flex:1;font-size:15px}
-  .act{color:var(--dim);font-size:13px}
-  .empty{color:var(--dim);font-size:15px;padding:12px 2px}
-  pre.install{background:#0b0c10;border:1px solid var(--line);border-radius:14px;padding:18px 20px;
-    overflow-x:auto;font:14px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0 0 14px}
-  .note{color:var(--dim);font-size:14px;margin:14px 0 0}
-  footer{margin:90px 0 60px;color:var(--dim);font-size:14px;text-align:center;border-top:1px solid var(--line);padding-top:26px}
-  a{color:#6cb6ff}
+  html{scroll-behavior:smooth;scroll-padding-top:72px;-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+    font-size:17px;line-height:1.6;letter-spacing:-.011em;
+    font-optical-sizing:auto;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+    overflow-x:hidden}
+  ::selection{background:rgba(245,197,24,.32);color:#fff}
+  a{color:var(--link);text-decoration:none}
+  a:hover{text-decoration:underline;text-underline-offset:3px}
+  :focus-visible{outline:2px solid var(--link);outline-offset:3px;border-radius:8px}
+  .wrap{width:min(1120px,calc(100% - 48px));margin-inline:auto}
+  .skip{position:absolute;left:-9999px;top:0;z-index:100;background:#fff;color:#000;
+    padding:10px 16px;border-radius:0 0 12px 0;font-size:14px}
+  .skip:focus{left:0;text-decoration:none}
+
+  /* nav */
+  .nav{position:sticky;top:0;z-index:50;
+    background:rgba(0,0,0,.5);
+    -webkit-backdrop-filter:saturate(180%) blur(20px);
+    backdrop-filter:saturate(180%) blur(20px);
+    border-bottom:1px solid transparent;
+    transition:background .45s var(--ease),border-color .45s var(--ease)}
+  .nav.scrolled{background:rgba(0,0,0,.82);border-bottom-color:rgba(255,255,255,.1)}
+  .nav-inner{display:flex;align-items:center;gap:10px;height:54px}
+  .brand{display:inline-flex;align-items:center;gap:9px;color:var(--fg);
+    font-weight:600;font-size:17px;letter-spacing:-.02em;text-decoration:none}
+  .brand:hover{text-decoration:none;opacity:.85}
+  .mark{width:19px;height:19px;flex:none}
+  .nav-links{display:flex;align-items:center;gap:26px;margin-left:auto}
+  .nav-links a{color:rgba(245,245,247,.72);font-size:13px;letter-spacing:-.005em;
+    transition:color .25s var(--ease)}
+  .nav-links a:hover{color:#fff;text-decoration:none}
+  .nav-gh{display:inline-flex;align-items:center;gap:7px;margin-left:22px;
+    font-size:13px;color:rgba(245,245,247,.82);text-decoration:none;
+    border:1px solid var(--line);border-radius:980px;padding:6px 13px;
+    transition:background .3s var(--ease),border-color .3s var(--ease),color .3s var(--ease)}
+  .nav-gh svg{width:14px;height:14px}
+  .nav-gh:hover{background:rgba(255,255,255,.08);border-color:var(--line-2);color:#fff;text-decoration:none}
+
+  /* hero */
+  .hero{position:relative;padding:104px 0 24px;overflow:hidden}
+  .hero-inner{position:relative;text-align:center}
+  .glow{position:absolute;border-radius:50%;pointer-events:none;
+    filter:blur(90px);will-change:transform;z-index:0}
+  .g1{width:860px;height:520px;left:50%;top:-190px;transform:translateX(-50%);
+    background:radial-gradient(circle at 50% 50%,rgba(245,197,24,.26),transparent 62%);
+    animation:drift 19s ease-in-out infinite alternate}
+  .g2{width:720px;height:720px;right:-200px;top:180px;
+    background:radial-gradient(circle at 50% 50%,rgba(10,132,255,.2),transparent 64%);
+    animation:drift2 26s ease-in-out infinite alternate}
+  @keyframes drift{from{transform:translate(-50%,0) scale(1)}to{transform:translate(-47%,28px) scale(1.07)}}
+  @keyframes drift2{from{transform:translate(0,0) scale(1)}to{transform:translate(-30px,40px) scale(1.1)}}
+
+  .eyebrow{margin:0;color:var(--dim-2);font-size:12px;font-weight:600;
+    letter-spacing:.16em;text-transform:uppercase}
+  h1{margin:16px 0 0;font-size:clamp(76px,15vw,170px);line-height:.86;
+    letter-spacing:-.055em;font-weight:700;color:#fff}
+  @supports ((-webkit-background-clip:text) or (background-clip:text)){
+    h1{background:linear-gradient(180deg,#fff 32%,#9a9aa1);
+      -webkit-background-clip:text;background-clip:text;
+      -webkit-text-fill-color:transparent;color:transparent}
+  }
+  .sub{margin:26px auto 0;max-width:700px;color:#d2d2d7;
+    font-size:clamp(19px,2.15vw,25px);line-height:1.42;letter-spacing:-.017em;font-weight:400}
+  .kbds{white-space:nowrap}
+  .sub kbd{font-size:.62em;padding:3px 8px 3px 7px;vertical-align:.14em;margin:0 1px}
+  .cta{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin:40px 0 0}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    padding:14px 28px;border-radius:980px;font-size:17px;font-weight:500;
+    letter-spacing:-.012em;text-decoration:none;
+    transition:transform .35s var(--ease),background .3s var(--ease),
+      box-shadow .35s var(--ease),border-color .3s var(--ease),color .3s var(--ease)}
+  .btn:hover{text-decoration:none}
+  .btn:active{transform:scale(.975)}
+  .btn.primary{background:var(--blue);color:#fff;
+    box-shadow:0 10px 34px -14px rgba(0,113,227,.95)}
+  .btn.primary:hover{background:var(--blue-hi);transform:translateY(-1px);
+    box-shadow:0 16px 42px -14px rgba(10,132,255,1)}
+  .btn.ghost{color:var(--fg);border:1px solid var(--line-2);background:rgba(255,255,255,.035)}
+  .btn.ghost:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.4)}
+
+  /* product shot */
+  .shot{margin:72px auto 0;max-width:1010px}
+  .shot-frame{position:relative;border-radius:28px;padding:1px;
+    background:linear-gradient(180deg,rgba(255,255,255,.3),rgba(255,255,255,.07) 42%,rgba(255,255,255,.035));
+    box-shadow:0 50px 130px -40px rgba(0,0,0,.95),
+      0 0 130px -50px rgba(245,197,24,.35)}
+  .shot-frame::after{content:"";position:absolute;inset:0;border-radius:28px;pointer-events:none;
+    background:linear-gradient(180deg,rgba(255,255,255,.07),transparent 26%)}
+  .shot img{display:block;width:100%;height:auto;border-radius:27px}
+  .note{margin:22px auto 0;max-width:760px;color:var(--dim-2);font-size:13px;line-height:1.6}
+
+  /* sections */
+  .section{position:relative;padding:124px 0}
+  .section::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
+    width:min(1120px,calc(100% - 48px));height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent)}
+  h2{margin:14px 0 0;font-size:clamp(34px,4.6vw,58px);line-height:1.04;
+    letter-spacing:-.032em;font-weight:700}
+  .lede{margin:20px 0 0;max-width:730px;color:var(--dim);
+    font-size:clamp(17px,1.5vw,20px);line-height:1.55}
+  .lede code{font-family:var(--mono);font-size:.88em;color:#d9d9de;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.09);
+    border-radius:6px;padding:1px 6px}
+
+  /* feature cards */
+  .keys{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:48px}
+  .key{position:relative;padding:30px 28px;border-radius:24px;
+    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.018));
+    border:1px solid var(--line);
+    transition:transform .55s var(--ease),border-color .4s var(--ease),background .4s var(--ease)}
+  .key:hover{transform:translateY(-4px);border-color:var(--line-2);
+    background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.028))}
+  .key svg{width:26px;height:26px;color:var(--amber);margin-bottom:20px}
+  .key b{display:block;font-size:18px;font-weight:600;letter-spacing:-.017em;margin-bottom:7px}
+  .key span{color:var(--dim);font-size:15px;line-height:1.5}
+
+  /* simulator */
+  .sim{margin-top:40px;border-radius:26px;border:1px solid var(--line);overflow:hidden;
+    background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.015));
+    -webkit-backdrop-filter:blur(20px) saturate(150%);
+    backdrop-filter:blur(20px) saturate(150%);
+    box-shadow:0 40px 100px -50px #000}
+  .sim-bar{display:flex;align-items:center;gap:8px;padding:13px 18px;
+    border-bottom:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)}
+  .sim-bar i{display:block;width:11px;height:11px;border-radius:50%;background:#3a3a3e}
+  .sim-bar em{margin-left:8px;font-style:normal;font-size:12px;color:var(--dim-2);letter-spacing:.02em}
+  .sim-body{padding:26px}
+  .sim label{display:block;margin-bottom:11px;color:var(--dim-2);
+    font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+  .field{display:flex;align-items:center;position:relative;
+    background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.14);border-radius:16px;
+    transition:border-color .3s var(--ease),box-shadow .35s var(--ease)}
+  .field:focus-within{border-color:rgba(41,151,255,.72);box-shadow:0 0 0 4px rgba(41,151,255,.16)}
+  .field svg{width:18px;height:18px;margin-left:16px;color:var(--dim-2);flex:none}
+  #q{flex:1;min-width:0;background:none;border:0;outline:0;color:var(--fg);
+    padding:16px 13px;font-family:var(--sans);font-size:17px;letter-spacing:-.011em;
+    text-overflow:ellipsis}
+  #q::placeholder{color:var(--dim-2);opacity:1}
+  .field kbd{margin-right:12px}
+  kbd{display:inline-block;background:#26262b;border:1px solid #3a3a40;
+    border-bottom-width:2px;border-radius:7px;padding:2px 7px;
+    font:600 13px/1.55 var(--mono);color:#e8e8ed;white-space:nowrap}
+  #out{margin-top:20px;min-height:132px}
+  .row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:14px;
+    border:1px solid transparent;animation:rowIn .42s var(--ease) both}
+  .row + .row{margin-top:6px}
+  .row.hit{background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.08)}
+  .row.sel{background:linear-gradient(180deg,rgba(245,197,24,.17),rgba(245,197,24,.075));
+    border-color:rgba(245,197,24,.38)}
+  @keyframes rowIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  .row:nth-child(2){animation-delay:.035s}
+  .row:nth-child(3){animation-delay:.07s}
+  .row:nth-child(4){animation-delay:.105s}
+  .row:nth-child(5){animation-delay:.14s}
+  .row:nth-child(6){animation-delay:.175s}
+  .hint{flex:none;min-width:36px;text-align:center;
+    background:var(--amber);color:#0a0a0a;border-radius:7px;padding:6px 8px;
+    font:700 12px/1 var(--mono);letter-spacing:0}
+  .nm{flex:1;min-width:0;font-size:15px;letter-spacing:-.01em}
+  .act{flex:none;color:var(--dim-2);font-size:13px}
+  .empty{margin:0;padding:12px 4px 0;color:var(--dim-2);font-size:14px}
+
+  /* terminal */
+  .term{margin-top:40px;border-radius:24px;border:1px solid var(--line);overflow:hidden;
+    background:rgba(255,255,255,.03)}
+  .term-bar{display:flex;align-items:center;gap:8px;padding:13px 18px;
+    border-bottom:1px solid rgba(255,255,255,.08)}
+  .term-bar i{display:block;width:11px;height:11px;border-radius:50%;background:#3a3a3e}
+  .term-title{margin-left:8px;font-size:12px;color:var(--dim-2);letter-spacing:.02em}
+  .copy{margin-left:auto;cursor:pointer;border-radius:980px;padding:7px 13px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.13);
+    color:var(--dim);font-family:var(--sans);font-size:12px;font-weight:500;
+    transition:color .25s var(--ease),background .25s var(--ease),border-color .25s var(--ease)}
+  .copy:hover{color:#fff;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.28)}
+  pre.install{margin:0;padding:24px 22px;overflow-x:auto;color:#e8e8ed;
+    font-family:var(--mono);font-size:14px;line-height:1.8;letter-spacing:0}
+
+  /* privacy stats */
+  .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;
+    margin-top:44px;border:1px solid var(--line);border-radius:24px;overflow:hidden;
+    background:var(--line)}
+  .stat{display:flex;flex-direction:column;gap:6px;padding:30px 26px;
+    background:#0a0a0b;transition:background .4s var(--ease)}
+  .stat:hover{background:#101013}
+  .stat b{font-size:clamp(26px,3vw,38px);font-weight:700;letter-spacing:-.03em;line-height:1}
+  .stat span{color:var(--dim);font-size:14px;letter-spacing:-.005em}
+
+  footer{padding:66px 0 84px;text-align:center;color:var(--dim-2);font-size:13px;line-height:1.75}
+  footer a{color:var(--dim)}
+  footer a:hover{color:#fff}
+
+  /* motion */
+  html.js .reveal{opacity:0;transform:translateY(22px);
+    transition:opacity .95s var(--ease),transform .95s var(--ease);
+    transition-delay:calc(var(--i,0) * 85ms)}
+  html.js .reveal.in{opacity:1;transform:none}
+
+  @media (max-width:900px){
+    .section{padding:96px 0}
+    .hero{padding-top:80px}
+    .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
+  @media (max-width:760px){
+    .nav-links{display:none}
+    .nav-gh{margin-left:auto}
+    .keys{grid-template-columns:1fr}
+    .row .act{display:none}
+    .sim-body{padding:20px}
+    .shot{margin-top:56px}
+  }
+  @media (max-width:420px){
+    .wrap{width:calc(100% - 36px)}
+    .stats{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+      transition-duration:.001ms !important;transition-delay:0ms !important}
+    html.js .reveal{opacity:1 !important;transform:none !important}
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>Orbit</h1>
-    <p class="sub">Click any visible control on your Mac without touching the mouse. Press
-      <kbd>⌘</kbd><kbd>E</kbd>, type, press Return.</p>
-    <div class="cta">
-      <a class="btn" href="https://github.com/EhsanAlaviNahad/Orbit#install">Install in one command</a>
+<a class="skip" href="#main">Skip to content</a>
+
+<nav class="nav" id="nav" aria-label="Primary">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="6" fill="#f5c518"/>
+        <ellipse cx="16" cy="16" rx="14" ry="5" fill="none" stroke="#e8e8ea" stroke-width="2" transform="rotate(-24 16 16)"/>
+      </svg>
+      <span>Orbit</span>
+    </a>
+    <div class="nav-links">
+      <a href="#overview">Overview</a>
+      <a href="#demo">Try it</a>
+      <a href="#install">Install</a>
+      <a href="#privacy">Privacy</a>
+    </div>
+    <a class="nav-gh" href="https://github.com/EhsanAlaviNahad/Orbit" aria-label="Orbit on GitHub">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+      </svg>
+      <span>GitHub</span>
+    </a>
+  </div>
+</nav>
+
+<main id="main">
+<section class="hero" id="top" aria-labelledby="hero-h">
+  <div class="glow g1" aria-hidden="true"></div>
+  <div class="glow g2" aria-hidden="true"></div>
+  <div class="wrap hero-inner">
+    <p class="eyebrow reveal" style="--i:0">macOS menu bar app · on-device</p>
+    <h1 id="hero-h" class="reveal" style="--i:1">Orbit</h1>
+    <p class="sub reveal" style="--i:2">Click any visible control on your Mac without touching the mouse. Press
+      <span class="kbds"><kbd>⌘</kbd><kbd>E</kbd></span>, type, press Return.</p>
+    <div class="cta reveal" style="--i:3">
+      <a class="btn primary" href="https://github.com/EhsanAlaviNahad/Orbit#install">Install in one command</a>
       <a class="btn ghost" href="https://github.com/EhsanAlaviNahad/Orbit">View on GitHub</a>
     </div>
-  </header>
-
-  <div class="stage">
-    <img src="demo/orbit-demo.gif" width="1200" height="675"
-      alt="Orbit recording: the Command-E overlay opens over a TextEdit window, hint labels appear on the toolbar controls, the user types bold into the search field, and pressing Return activates the Bold button.">
+    <figure class="shot reveal" style="--i:4">
+      <div class="shot-frame">
+        <img src="demo/orbit-demo.gif" width="1200" height="675" decoding="async"
+          alt="Orbit recording: the Command-E overlay opens over a TextEdit window, hint labels appear on the toolbar controls, the user types bold into the search field, and pressing Return activates the Bold button.">
+      </div>
+      <figcaption class="note">Recording of Orbit 0.4.1 running on macOS 27.2, captured from the real overlay and
+        the real target window. The desktop around them was replaced with a neutral backdrop so nothing
+        personal appears.</figcaption>
+    </figure>
   </div>
-  <p class="note">Recording of Orbit 0.4.1 running on macOS 27.2, captured from the real overlay and
-    the real target window. The desktop around them was replaced with a neutral backdrop so nothing
-    personal appears.</p>
+</section>
 
-  <h2>What you can do from the keyboard</h2>
-  <p class="lede">Orbit scans only the focused window, using macOS Accessibility for native controls
-    and optional on-device Vision OCR where the accessibility tree is sparse.</p>
-  <div class="keys">
-    <div class="key"><b>Click, double-click, right-click</b><span>Return, Option-Return, Shift-Return</span></div>
-    <div class="key"><b>Arrange the window</b><span>left, right, top, bottom, center, fill, maximize, full screen</span></div>
-    <div class="key"><b>Scroll with hints open</b><span>Option-Up / Option-Down, 0.5× to 3×</span></div>
-    <div class="key"><b>System commands</b><span>restart, shutdown, sleep — each needs two Returns</span></div>
+<section class="section" id="overview" aria-labelledby="overview-h">
+  <div class="wrap">
+    <p class="eyebrow reveal">Keyboard first</p>
+    <h2 id="overview-h" class="reveal">What you can do from the keyboard</h2>
+    <p class="lede reveal">Orbit scans only the focused window, using macOS Accessibility for native controls
+      and optional on-device Vision OCR where the accessibility tree is sparse.</p>
+    <div class="keys">
+      <article class="key reveal" style="--i:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 3.5 18.5 11l-6 1.7L10 19z"/>
+        </svg>
+        <b>Click, double-click, right-click</b>
+        <span>Return, Option-Return, Shift-Return</span>
+      </article>
+      <article class="key reveal" style="--i:1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4.5" width="18" height="15" rx="3"/>
+          <path d="M12 4.5v15"/>
+        </svg>
+        <b>Arrange the window</b>
+        <span>left, right, top, bottom, center, fill, maximize, full screen</span>
+      </article>
+      <article class="key reveal" style="--i:2">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v18"/>
+          <path d="m7 8 5-5 5 5"/>
+          <path d="m7 16 5 5 5-5"/>
+        </svg>
+        <b>Scroll with hints open</b>
+        <span>Option-Up / Option-Down, 0.5× to 3×</span>
+      </article>
+      <article class="key reveal" style="--i:3">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v9"/>
+          <path d="M6.4 6.4a8 8 0 1 0 11.2 0"/>
+        </svg>
+        <b>System commands</b>
+        <span>restart, shutdown, sleep — each needs two Returns</span>
+      </article>
+    </div>
   </div>
+</section>
 
-  <h2>Try the search here</h2>
-  <p class="lede">This is a simulator running in your browser, not Orbit itself. Its search is a
-    line-by-line port of <code>TargetSearch</code> from <code>Core.swift</code> — same normalisation,
-    same five ranking tiers, same command aliases, and the same exact-only rule for the system
-    commands — verified against the Swift implementation across 22 queries. It searches a fixed list
-    of controls and commands, so the hint labels are illustrative rather than a live scan: Orbit
-    needs a real macOS window to read.</p>
-  <div class="sim">
-    <label for="q">Search controls</label>
-    <input id="q" placeholder="try bold, cent, left, restart" autocomplete="off" spellcheck="false">
-    <div id="out"></div>
+<section class="section" id="demo" aria-labelledby="demo-h">
+  <div class="wrap">
+    <p class="eyebrow reveal">Live in your browser</p>
+    <h2 id="demo-h" class="reveal">Try the search here</h2>
+    <p class="lede reveal">This is a simulator running in your browser, not Orbit itself. Its search is a
+      line-by-line port of <code>TargetSearch</code> from <code>Core.swift</code> — same normalisation,
+      same five ranking tiers, same command aliases, and the same exact-only rule for the system
+      commands — verified against the Swift implementation across 22 queries. It searches a fixed list
+      of controls and commands, so the hint labels are illustrative rather than a live scan: Orbit
+      needs a real macOS window to read.</p>
+    <div class="sim reveal" style="--i:1">
+      <div class="sim-bar" aria-hidden="true"><i></i><i></i><i></i><em>Orbit — search</em></div>
+      <div class="sim-body">
+        <label for="q">Search controls</label>
+        <div class="field">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/>
+            <path d="m20 20-3.6-3.6"/>
+          </svg>
+          <input id="q" placeholder="try bold, cent, left, restart" autocomplete="off" spellcheck="false">
+          <kbd aria-hidden="true">⌘E</kbd>
+        </div>
+        <div id="out" aria-live="polite"></div>
+      </div>
+    </div>
   </div>
+</section>
 
-  <h2>Install</h2>
-  <pre class="install">curl -fsSL https://raw.githubusercontent.com/EhsanAlaviNahad/Orbit/main/Scripts/install.sh | bash</pre>
-  <p class="note">Requires an Apple silicon Mac on macOS 27 or newer, plus the Swift 6.2 command line
-    tools. Orbit then lives only in the menu bar; grant it Accessibility on first use. The script
-    replaces <code>~/Applications/Orbit.app</code> and removes <code>~/Applications/Eclick.app</code>
-    only if that bundle carries Orbit's old identifier — read
-    <code>Scripts/install-app.sh</code>, which is where that happens, before you pipe it into a shell.</p>
+<section class="section" id="install" aria-labelledby="install-h">
+  <div class="wrap">
+    <p class="eyebrow reveal">One command</p>
+    <h2 id="install-h" class="reveal">Install</h2>
+    <div class="term reveal" style="--i:1">
+      <div class="term-bar" aria-hidden="true">
+        <i></i><i></i><i></i><span class="term-title">Terminal</span>
+        <button class="copy" id="copy" type="button">Copy</button>
+      </div>
+      <pre class="install"><code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/EhsanAlaviNahad/Orbit/main/Scripts/install.sh | bash</code></pre>
+    </div>
+    <p class="note">Requires an Apple silicon Mac on macOS 27 or newer, plus the Swift 6.2 command line
+      tools. Orbit then lives only in the menu bar; grant it Accessibility on first use. The script
+      replaces <code>~/Applications/Orbit.app</code> and removes <code>~/Applications/Eclick.app</code>
+      only if that bundle carries Orbit's old identifier — read
+      <code>Scripts/install-app.sh</code>, which is where that happens, before you pipe it into a shell.</p>
+  </div>
+</section>
 
-  <h2>Privacy</h2>
-  <p class="lede">No network calls, no telemetry, no accounts. Screen content, element names, and
-    everything you type stay in memory on your Mac. OCR runs on-device through Vision.</p>
+<section class="section" id="privacy" aria-labelledby="privacy-h">
+  <div class="wrap">
+    <p class="eyebrow reveal">On device</p>
+    <h2 id="privacy-h" class="reveal">Privacy</h2>
+    <p class="lede reveal">No network calls, no telemetry, no accounts. Screen content, element names, and
+      everything you type stay in memory on your Mac. OCR runs on-device through Vision.</p>
+    <div class="stats">
+      <div class="stat reveal" style="--i:0"><b>0</b><span>network calls</span></div>
+      <div class="stat reveal" style="--i:1"><b>0</b><span>telemetry events</span></div>
+      <div class="stat reveal" style="--i:2"><b>0</b><span>accounts</span></div>
+      <div class="stat reveal" style="--i:3"><b>Vision</b><span>OCR on-device</span></div>
+    </div>
+  </div>
+</section>
+</main>
 
-  <footer>
-    Orbit is MIT licensed and maintained at
-    <a href="https://github.com/EhsanAlaviNahad/Orbit">EhsanAlaviNahad/Orbit</a>.
-    Not affiliated with or endorsed by Apple.
-  </footer>
-</div>
+<footer>
+  Orbit is MIT licensed and maintained at
+  <a href="https://github.com/EhsanAlaviNahad/Orbit">EhsanAlaviNahad/Orbit</a>.
+  Not affiliated with or endorsed by Apple.
+</footer>
+
 <script>
 const TARGETS=[
  {hint:"AD",name:"Bold text checkbox",action:"Click"},
@@ -193,6 +492,46 @@ function render(){
     `<div class="empty">${hits.length} result${hits.length>1?"s":""} · Return clicks the first</div>`;
 }
 q.addEventListener("input",render);render();
+</script>
+<script>
+(() => {
+  const reveal = document.querySelectorAll(".reveal");
+  const show = el => el.classList.add("in");
+
+  if (!("IntersectionObserver" in window)) {
+    reveal.forEach(show);
+  } else {
+    const io = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) { show(entry.target); io.unobserve(entry.target); }
+      }
+    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.06 });
+    reveal.forEach(el => io.observe(el));
+  }
+  document.querySelectorAll(".hero .reveal").forEach(show);
+
+  const nav = document.getElementById("nav");
+  const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 8);
+  onScroll();
+  addEventListener("scroll", onScroll, { passive: true });
+
+  const copy = document.getElementById("copy");
+  const cmd = document.getElementById("install-cmd");
+  copy?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(cmd.textContent.trim());
+      copy.textContent = "Copied";
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(cmd);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      copy.textContent = "Press ⌘C";
+    }
+    setTimeout(() => { copy.textContent = "Copy"; }, 1800);
+  });
+})();
 </script>
 </body>
 </html>
